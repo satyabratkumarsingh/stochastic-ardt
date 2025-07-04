@@ -12,7 +12,7 @@ Trajectory = namedtuple("Trajectory", ["obs", "actions", "rewards", "adv_actions
 
 class BaseOfflineEnv:
 
-    def __init__(self, p, env_cls, data_policy, horizon, n_interactions, test=False, state_dim=7):
+    def __init__(self, p, env_cls, data_policy, horizon, n_interactions, test=False, state_dim=12):
         self.env_cls = env_cls
         self.data_policy = data_policy
         self.horizon = horizon
@@ -115,10 +115,14 @@ def one_hot_encode(state, state_mapping, state_dim):
         state_mapping[state] = one_hot_vector
     return state_mapping[state]
 
-def convert_dataset(dataset, state_dim=7):
+def convert_dataset(dataset, state_dim=12):
     trajectories = []
     state_mapping = {}
-
+    unique_states = set()
+    for episode in dataset:
+        unique_states.update(episode['num_states'])
+    print(f"Unique states: {unique_states}, Count: {len(unique_states)}")
+    state_dim = len(unique_states)
     all_action_categories = sorted(set(action for episode in dataset for action in episode["str_actions"]))
     max_str_actions_length = max(len(episode["str_actions"]) for episode in dataset)
     max_timesteps = max(len(episode["num_states"]) for episode in dataset)

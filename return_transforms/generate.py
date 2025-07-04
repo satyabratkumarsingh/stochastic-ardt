@@ -125,7 +125,8 @@ def generate_maxmin(
     if run_implicit:
         from return_transforms.algos.maxmin.maxmin_implicit import maxmin
         print("Running implicit Q learning =======")
-
+        print("TRAJECTORY=======")
+        print(trajs)
         rets, prompt_value = maxmin(
             trajs,
             env.action_space,

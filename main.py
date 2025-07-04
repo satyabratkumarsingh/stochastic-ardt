@@ -145,3 +145,9 @@ if __name__ == '__main__':
                 variant=vars(args),
                 offline_file=variant['offline_file']
             )
+
+# Trajectory(obs=[array([1., 0., 0., 0., 0., 0., 0.]), 
+# array([0., 0., 0., 1., 0., 0., 0.])], 
+# actions=[0, 0], rewards=[0, 6],
+#  infos=[{'adv': np.int64(2)}, {'adv': 0}], 
+#  policy_infos=[PolicyInfo(), PolicyInfo()])
