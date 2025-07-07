@@ -354,15 +354,12 @@ def maxmin(
                 total_q_loss += q_only_loss_adv.item() if not torch.isnan(q_only_loss_adv) else 0
                 total_iql_loss += iql_loss_adv.item() if not torch.isnan(iql_loss_adv) else 0
 
-            pbar.set_description(f"Epoch {epoch} | "
-                                f"Total Loss: {total_loss / total_batches:.4f} | "
-                                f"Pr Loss: {total_pr_loss / total_batches:.4f} (batch: {ret_pr_loss.item():.4f}) | "
-                                f"Adv Loss: {total_adv_loss / total_batches:.4f} (batch: {ret_adv_loss.item():.4f}) | "
-                                f"V Loss: {total_v_loss / total_batches:.4f} (batch: {v_loss.item():.4f}) | "
-                                f"Q Loss: {total_q_loss / total_batches:.4f} "
-                                f"(pr: {q_only_loss_pr.item():.4f}, adv: {q_only_loss_adv.item():.4f}) | "
-                                f"IQL Loss: {total_iql_loss / total_batches:.4f} "
-                                f"(pr: {iql_loss_pr.item():.4f}, adv: {iql_loss_adv.item():.4f})")
+            pbar.set_description(f"Epoch {epoch} | Total Loss: {total_loss / total_batches:.6f} | "
+                     f"Pr Loss: {total_pr_loss / total_batches:.6f} (batch: {ret_pr_loss.item():.6f}) | "
+                     f"Adv Loss: {total_adv_loss / total_batches:.6f} (batch: {ret_adv_loss.item():.6f})\n"
+                     f"V Loss: {total_v_loss / total_batches:.6f} (batch: {v_loss.item():.6f}) | "
+                     f"Q Loss: {total_q_loss / total_batches:.6f} (pr: {q_only_loss_pr.item():.6f}, adv: {q_only_loss_adv.item():.6f}) | "
+                     f"IQL Loss: {total_iql_loss / total_batches:.6f} (pr: {iql_loss_pr.item():.6f}, adv: {iql_loss_adv.item():.6f})")
             
 
 
@@ -375,7 +372,7 @@ def maxmin(
             obs = torch.from_numpy(np.array(traj.obs)).float().to(device).view(1, -1, obs_size)
             acts = torch.from_numpy(np.array(traj.actions)).to(device).view(1, -1)
             if action_type == "discrete" and not is_discretize:
-                acts = torch.nn.functional.one_hot(acts, num_classes=action_size)
+                acts = torch.from_numpy(np.array(traj.actions)).float().to(device).view(1, -1, action_size)
             else:
                 acts = acts.view(1, -1, action_size)
             # Use ValueNet for returns

@@ -14,22 +14,23 @@ from decision_transformer.decision_transformer.training.act_trainer import ActTr
 from decision_transformer.decision_transformer.training.seq_trainer import SequenceTrainer
 from decision_transformer.decision_transformer.training.adv_seq_trainer import AdvSequenceTrainer
 from decision_transformer.decision_transformer.utils.preemption import PreemptionManager
+from offline_setup.base_offline_env import BaseOfflineEnv
+from offline_setup.base_offline_env import Trajectory
 
 def experiment(
-        offline_trjs,
+        task: BaseOfflineEnv,
         env: gym.Env,
         max_ep_len: int,
         env_targets: list,
         scale: float,
         action_type: str,
         variant: dict,
-        offline_file: str
     ):
     """
     Run the experiment for the given task and environment.
 
     Args:
-        offline_trjs : Offline Trajectories.
+        task (BaseOfflineEnv): Task object.
         env (gym.Env): Environment object.
         max_ep_len (int): Maximum episode length.
         env_targets (list): List of target environments.
@@ -37,28 +38,13 @@ def experiment(
         action_type (str): Type of action space.
         variant (dict): Dictionary containing the experiment configuration.
     """
-    wandb.login()
-    wandb.init(
-        # Set the project where this run will be logged
-        project="offline-game"
-    )
 
     def _discount_cumsum(x, gamma):
-        x = np.asarray(x)
-        if x.ndim == 0:
-            return x
         discount_cumsum = np.zeros_like(x)
         discount_cumsum[-1] = x[-1]
-        for t in range(len(x) - 2, -1, -1):
-            discount_cumsum[t] = x[t] + gamma * discount_cumsum[t + 1]
+        for t in reversed(range(x.shape[0] - 1)):
+            discount_cumsum[t] = x[t] + gamma * discount_cumsum[t+1]
         return discount_cumsum
-
-    # def _discount_cumsum(x, gamma):
-    #     discount_cumsum = np.zeros_like(x)
-    #     discount_cumsum[-1] = x[-1]
-    #     for t in reversed(range(x.shape[0] - 1)):
-    #         discount_cumsum[t] = x[t] + gamma * discount_cumsum[t+1]
-    #     return discount_cumsum
 
     # Admin
     pm = PreemptionManager(variant['checkpoint_dir'], checkpoint_every=600)
@@ -76,65 +62,55 @@ def experiment(
     if action_type == 'discrete':
         act_dim = env.action_space.n
         adv_act_dim = env.adv_action_space.n
-        if offline_file:
-            act_dim = 3
-            adv_act_dim = 3
     else:
         act_dim = env.action_space.shape[0]
         adv_act_dim = env.adv_action_space.shape[0]
 
     # Load dataset
-    
+    raw_trajectories = task.trajs
     trajectories = []
-
-    for i, traj in enumerate(offline_trjs):
+    for traj in raw_trajectories:
         traj_dict = {}
-        for i, key in enumerate(["observations", "actions", "rewards", "adv_actions"]):
-            cur_info = traj[i]
-            if key == "actions":
+        # Convert Trajectory to dict if necessary
+        if isinstance(traj, Trajectory):
+            traj = {
+                "obs": traj.obs,
+                "actions": traj.actions,
+                "rewards": traj.rewards,
+                "adv_actions": traj.adv_actions,
+                "adv_rewards": getattr(traj, "adv_rewards", None),
+                "infos": getattr(traj, "infos", None)
+            }
+
+        # Process required keys
+        for key in ["obs", "actions", "rewards", "adv_actions"]:
+            cur_info = traj[key]
+            traj_dict[key] = np.array(cur_info)
+
+            # Pad obs to match state_dim
+            if key == "obs" and traj_dict["obs"].shape[-1] < state_dim:
+                padding = np.zeros((traj_dict["obs"].shape[0], state_dim - traj_dict["obs"].shape[-1]))
+                traj_dict["observations"] = np.hstack([traj_dict["obs"], padding])
+            
+            # Set dones only once
+            if key == "obs":
                 traj_dict["dones"] = np.zeros(len(cur_info), dtype=bool)
                 traj_dict["dones"][-1] = True
-                if offline_file: 
-                    traj_dict[key] = cur_info  
-                else:
-                    traj_dict[key] = np.array(cur_info) if action_type != 'discrete' else np.eye(act_dim)[cur_info]
-            else:
-                traj_dict[key] = np.array(cur_info)
 
-        if "adv" in traj.infos[0]:
-            adv_a = np.array([info["adv"] if info else -1 for info in traj.infos])
-        elif "adv_action" in traj.infos[0]:
-            adv_a = np.array([info["adv_action"] if info else 0 for info in traj.infos])
-        else:
-            print("WARNING: No adv or adv_action in infos")
-            if action_type == "discrete":
-                adv_a = np.zeros((len(traj_dict["actions"])))
-            else:
-                adv_a = np.zeros((len(traj_dict["actions"]), adv_act_dim))
+        # Handle optional fields
+        traj_dict["adv_rewards"] = np.array(traj.get("adv_rewards", np.zeros_like(traj["rewards"])))
+        traj_dict["infos"] = traj.get("infos", [{}] * len(traj["obs"]))
 
-        if action_type == "discrete" and not offline_file:
-            traj_dict['adv_actions'] = np.zeros((len(traj_dict["actions"]), adv_act_dim))
-            traj_dict['adv_actions'][np.arange(len(traj_dict["actions"])), adv_a.astype(int)] = 1
-            if traj.infos[-1] == {}:
-                traj_dict['adv_actions'][-1] = 0
-        else:
-            traj_dict['adv_actions'] = adv_a
-        if offline_file:
-            if key == "adv_actions":
-                traj_dict[key] = np.array(cur_info)
-
+        # Create Trajectory object
         trajectories.append(traj_dict)
+
+
 
     # Save all path information into separate lists and pre-compute returns
     states, traj_lens, returns = [], [], []
 
     for path in trajectories:
-        if np.asarray(path['rewards']).ndim == 0 or len(path['rewards']) == 1:
-            # No discounting needed for single reward
-            path['rtg'] = np.asarray(path['rewards'])
-        else:
-            # Apply discounting for sequences
-            path['rtg'] = _discount_cumsum(path['rewards'], gamma=1.)
+        path['rtg'] = _discount_cumsum(path['rewards'], gamma=1.)
         if env_name == "connect_four":
             cur_state = np.array([obs for obs in path['observations']])
             states.append(cur_state.reshape(cur_state.shape[0], -1))
@@ -178,12 +154,11 @@ def experiment(
     pickle.dump([np.mean(returns), np.std(returns)], open(f'offline_data/data_profile_{returns_filename}.pkl', 'wb'))
     print(f"offline_data/data_profile_{returns_filename}.pkl")
 
-
     # Used to generate evaluation functions to be fed into different training runs
     eval_fn_generator = EvalFnGenerator(
         variant.get('seed', 0),
         env_name,
-        offline_trjs,
+        task,
         (1 if variant['argmax'] else variant['num_eval_episodes']),
         state_dim, 
         act_dim, 

@@ -1,12 +1,13 @@
 from offline_setup.toy_setup import ToyEnv
+from offline_setup.kuhn_poker_env import KuhnPokerEnv
 from offline_setup.random_policy import RandomPolicy
 from offline_setup.base_offline_env import BaseOfflineEnv
 
 class ToyOfflineEnv(BaseOfflineEnv):
 
     def __init__(self, path, horizon=5, n_interactions=int(1e5)):
-        self.env_cls = lambda: ToyEnv()
-        self.test_env_cls = lambda: ToyEnv()
+        self.env_cls = lambda: KuhnPokerEnv()
+        self.test_env_cls = lambda: KuhnPokerEnv()
 
         def data_policy_fn():
             test_env = self.env_cls()

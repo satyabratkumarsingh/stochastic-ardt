@@ -118,33 +118,32 @@ if __name__ == '__main__':
             "action_type": "discrete"
         }
 
-        generate_maxmin(
-            env, 
-            trajs, 
-            variant['config'], 
-            variant['ret_file'], 
-            variant['device'], 
-            variant['n_cpu'], 
-            is_simple_model=variant['is_simple_maxmin_model'],
-            is_toy=(variant['env_name'] == 'toy'),
-            run_implicit=variant['run_implicit']
+        # generate_maxmin(
+        #     env, 
+        #     trajs, 
+        #     variant['config'], 
+        #     variant['ret_file'], 
+        #     variant['device'], 
+        #     variant['n_cpu'], 
+        #     is_simple_model=variant['is_simple_maxmin_model'],
+        #     is_toy=(variant['env_name'] == 'toy'),
+        #     run_implicit=variant['run_implicit']
+        # )
+
+        # for test_adv in test_advs:   
+        #     variant['test_adv'] = test_adv
+        #     if variant['env_name'] in {'halfcheetah', 'hopper', 'walker2d'}:
+        #         env.reset_adv_agent(variant['test_adv'], variant['device'])
+
+        experiment(
+            task,
+            env,
+            env_params['max_ep_len'],
+            env_params['env_targets'],
+            env_params['scale'],
+            env_params['action_type'],
+            variant=vars(args)
         )
-
-        for test_adv in test_advs:   
-            variant['test_adv'] = test_adv
-            if variant['env_name'] in {'halfcheetah', 'hopper', 'walker2d'}:
-                env.reset_adv_agent(variant['test_adv'], variant['device'])
-
-            experiment(
-                trajs,
-                env,
-                env_params['max_ep_len'],
-                env_params['env_targets'],
-                env_params['scale'],
-                env_params['action_type'],
-                variant=vars(args),
-                offline_file=variant['offline_file']
-            )
 
 # Trajectory(obs=[array([1., 0., 0., 0., 0., 0., 0.]), 
 # array([0., 0., 0., 1., 0., 0., 0.])], 

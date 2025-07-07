@@ -5,145 +5,249 @@ import torch.nn.functional as F
 from torch.distributions import Categorical
 from tqdm import tqdm
 
-from stochastic_offline_envs.envs.connect_four.connect_four_env import GridWrapper
-from stochastic_offline_envs.stochastic_offline_envs.envs.offline_envs.base import BaseOfflineEnv
-
+from offline_setup.base_offline_env import BaseOfflineEnv
 
 def worst_case_env_step(
-        state: np.array, 
-        action: np.array, 
-        timestep: int,
-        env_name: str, 
-        env: BaseOfflineEnv
-    ) -> tuple[np.array, float, bool, bool, dict]:
+    state: np.array,
+    action: np.array,
+    timestep: int,
+    env_name: str,
+    env: BaseOfflineEnv
+) -> tuple[np.array, float, bool, bool, dict]:
     """
-    Function to simulate worst-case adversaries in toy environments.
+    Simulate worst-case adversaries for toy environments, including Kuhn Poker.
 
     Args:
-        state (np.array): Current state.
-        action (np.array): Current action.
-        timestep (int): Current timestep.
-        env_name (str): Name of the environment.
+        state (np.array): Current state, shape [10] for Kuhn Poker.
+        action (np.array): Current action, one-hot [2] or scalar (0=fold, 1=bet).
+        timestep (int): Current timestep (0-based).
+        env_name (str): Name of the environment ("kuhn_poker").
         env (BaseOfflineEnv): Environment object.
 
     Returns:
-        tuple: New state, reward, done, truncated, and info (incl. adversarial action).
+        tuple: (new_state, reward, done, truncated, info)
     """
-    new_state_idx = -1
-    adv_action = np.random.choice(2, 1)
-    
-    _, reward, terminated, truncated, _ = env.step(action)
-    done = terminated or truncated
-    
-    if env_name == "gambling":
-        if timestep == 0:
-            if action == 0:
-                w_reward = -15 
-            elif action == 1:
-                w_reward = -6
-            else:
-                w_reward = 1
-        elif timestep == 1:
-            reward = w_reward
-            assert done
-    elif env_name == "toy":
-        if timestep == 0:
-            if action == 0:
-                env.w_reward = 0
-            else:
-                env.w_reward = 1
-        else:
-            #print(env.w_reward)
-            reward = env.w_reward
-            if not isinstance(action, torch.Tensor):
-                action = torch.tensor(action)
-            if reward != 0 or torch.any(action != -10):  # implies it's a real move
-            # only then check for done
-                if timestep == 1:
-                    assert done
-    elif env_name == "mstoy":
-        done = False
-        if timestep == 0:
-            if action > 0:
-                reward = 4
-                done = True
-            else:
-                new_state_idx = 1
-                reward = 0
-                adv_action = 0
-        else:
-            reward = env.reward_list[action + (state.argmax() - 1) * 3]
-            done = True
-    elif env_name == "new_mstoy":
-        done = False
-        if timestep == 0:
-            if action > 0:
-                reward = 4
-                done = True
-            else:
-                new_state_idx = 1
-                reward = 0
-        else:
-            reward = env.reward_list[action * 2 + (state.argmax() - 1) * 3]
-            done = True
-    else:
-        raise RuntimeError("Environment Error.")
+    # Convert action to int
+    if isinstance(action, np.ndarray) and action.size > 1:
+        action = np.argmax(action)
+    elif isinstance(action, (np.ndarray, np.integer, int)):
+        action = int(action)
 
-    new_state = np.eye(state.size)[new_state_idx] if new_state_idx != -1 else state
-    return new_state, reward, done, False, {"adv_action": adv_action}
+    # Initialize
+    new_state = state
+    reward = 0.0
+    done = False
+    truncated = False
+    info = {'adv_action': None}
+
+    if env_name == "kuhn_poker":
+        card_idx = np.argmax(state[:3])  # J=0, Q=1, K=2
+        player_card = ['J', 'Q', 'K'][card_idx]
+        
+        if timestep == 0:
+            env.step(action)
+            if action == 0:  # Fold
+                reward = -1.0
+                done = True
+                adv_action = 0
+            else:  # Bet
+                adv_action = 1  # Worst-case: bet
+                new_state = np.zeros_like(state)
+                new_state[card_idx] = 1.0
+                new_state[3] = 1.0
+                new_state[4] = 1.0
+            info['adv_action'] = adv_action
+        elif timestep == 1:
+            if env.actions_taken[-1] == 1:  # Adversary bet
+                if action == 0:  # Fold
+                    reward = -1.0
+                    done = True
+                else:  # Bet
+                    player_rank = ['J', 'Q', 'K'].index(player_card)
+                    opponent_rank = ['J', 'Q', 'K'].index(env.opponent_card)
+                    reward = 2.0 if player_rank > opponent_rank else -2.0
+                    done = True
+                new_state = np.zeros_like(state)
+                new_state[card_idx] = 1.0
+                new_state[3] = 1.0
+                new_state[4] = 1.0
+                new_state[5] = 1.0
+            else:  # Adversary folded
+                reward = 1.0
+                done = True
+            info['adv_action'] = env.actions_taken[-1]
+        else:
+            raise RuntimeError("Kuhn Poker timestep exceeds max length (2).")
+    else:
+        new_state_idx = -1
+        adv_action = np.random.choice(2, 1)
+        _, reward, terminated, _ = env.step(action)
+        done = terminated
+        if env_name == "gambling":
+            if timestep == 0:
+                if action == 0:
+                    w_reward = -15
+                elif action == 1:
+                    w_reward = -6
+                else:
+                    w_reward = 1
+            elif timestep == 1:
+                reward = w_reward
+                # Remove assert done to handle cases where episode continues
+        elif env_name == "toy":
+            if timestep == 0:
+                if action == 0:
+                    env.w_reward = 0
+                else:
+                    env.w_reward = 1
+            else:
+                reward = env.w_reward
+                if not isinstance(action, torch.Tensor):
+                    action = torch.tensor(action)
+                if reward != 0 or torch.any(action != -10):
+                    done = True
+        elif env_name == "mstoy":
+            done = False
+            if timestep == 0:
+                if action > 0:
+                    reward = 4
+                    done = True
+                else:
+                    new_state_idx = 1
+                    reward = 0
+                    adv_action = 0
+            else:
+                reward = env.reward_list[action + (state.argmax() - 1) * 3]
+                done = True
+        elif env_name == "new_mstoy":
+            done = False
+            if timestep == 0:
+                if action > 0:
+                    reward = 4
+                    done = True
+                else:
+                    new_state_idx = 1
+                    reward = 0
+            else:
+                reward = env.reward_list[action * 2 + (state.argmax() - 1) * 3]
+                done = True
+        else:
+            raise RuntimeError(f"Unsupported environment: {env_name}")
+        new_state = np.eye(state.size)[new_state_idx] if new_state_idx != -1 else state
+        info = {"adv_action": adv_action}
+
+    return new_state, reward, done, truncated, info
+
+# def worst_case_env_step(
+#         state: np.array, 
+#         action: np.array, 
+#         timestep: int,
+#         env_name: str, 
+#         env: BaseOfflineEnv
+#     ) -> tuple[np.array, float, bool, bool, dict]:
+#     """
+#     Function to simulate worst-case adversaries in toy environments.
+
+#     Args:
+#         state (np.array): Current state.
+#         action (np.array): Current action.
+#         timestep (int): Current timestep.
+#         env_name (str): Name of the environment.
+#         env (BaseOfflineEnv): Environment object.
+
+#     Returns:
+#         tuple: New state, reward, done, truncated, and info (incl. adversarial action).
+#     """
+#     new_state_idx = -1
+#     adv_action = np.random.choice(2, 1)
+    
+#     _, reward, terminated, _ = env.step(action)
+#     done = terminated
+    
+#     if env_name == "gambling":
+#         if timestep == 0:
+#             if action == 0:
+#                 w_reward = -15 
+#             elif action == 1:
+#                 w_reward = -6
+#             else:
+#                 w_reward = 1
+#         elif timestep == 1:
+#             reward = w_reward
+#             assert done
+#     elif env_name == "toy":
+#         if timestep == 0:
+#             if action == 0:
+#                 env.w_reward = 0
+#             else:
+#                 env.w_reward = 1
+#         else:
+#             #print(env.w_reward)
+#             reward = env.w_reward
+#             if not isinstance(action, torch.Tensor):
+#                 action = torch.tensor(action)
+#             if reward != 0 or torch.any(action != -10):  # implies it's a real move
+#             # only then check for done
+#                 if timestep == 1:
+#                     assert done
+#     elif env_name == "mstoy":
+#         done = False
+#         if timestep == 0:
+#             if action > 0:
+#                 reward = 4
+#                 done = True
+#             else:
+#                 new_state_idx = 1
+#                 reward = 0
+#                 adv_action = 0
+#         else:
+#             reward = env.reward_list[action + (state.argmax() - 1) * 3]
+#             done = True
+#     elif env_name == "new_mstoy":
+#         done = False
+#         if timestep == 0:
+#             if action > 0:
+#                 reward = 4
+#                 done = True
+#             else:
+#                 new_state_idx = 1
+#                 reward = 0
+#         else:
+#             reward = env.reward_list[action * 2 + (state.argmax() - 1) * 3]
+#             done = True
+#     else:
+#         raise RuntimeError("Environment Error.")
+
+#     new_state = np.eye(state.size)[new_state_idx] if new_state_idx != -1 else state
+#     return new_state, reward, done, False, {"adv_action": adv_action}
   
 
 def evaluate_episode(
-        env,
-        env_name: str,
-        state_dim: int,
-        act_dim: int,
-        action_type: str,
-        model: torch.nn.Module,
-        model_type: str,
-        max_ep_len: int,
-        scale: float,
-        state_mean: np.ndarray,
-        state_std: np.ndarray,
-        target_return: float,
-        adv_act_dim: int = None,
-        normalize_states: bool = False,
-        worst_case: bool = True,
-        with_noise: bool = False,
-        device: str = 'cpu',
-    ) -> tuple[float, int]:
-    """
-    Evaluate a single episode of the environment with the model.
-
-    Args:
-        env: The environment instance.
-        env_name (str): The name of the environment.
-        state_dim (int): Dimension of the state space.
-        act_dim (int): Dimension of the action space.
-        action_type (str): Type of action space ('discrete' or 'continuous').
-        model (torch.nn.Module): The model used for decision-making.
-        model_type (str): The type of model ('dt', 'adt', or 'bc').
-        max_ep_len (int): Maximum length of the episode.
-        scale (float): Scale for normalization of returns.
-        state_mean (np.ndarray): Mean of the states for normalization.
-        state_std (np.ndarray): Standard deviation of the states for normalization.
-        target_return (float): Target return value for the evaluation.
-        adv_act_dim (int, optional): Dimension of the adversarial action space. Default is None.
-        normalize_states (bool, optional): Whether to normalize the states. Default is False.
-        worst_case (bool, optional): Whether to use worst-case scenario for specific environments. Default is True.
-        with_noise (bool, optional): Whether to add noise to the state. Default is False.
-        device (str, optional): Device to run the model on. Default is 'cpu'.
-
-    Returns:
-        tuple: Episode return and episode length.
-    """
+    env,
+    env_name: str,
+    state_dim: int,
+    act_dim: int,
+    action_type: str,
+    model: torch.nn.Module,
+    model_type: str,
+    max_ep_len: int,
+    scale: float,
+    state_mean: np.ndarray,
+    state_std: np.ndarray,
+    target_return: float,
+    adv_act_dim: int = None,
+    normalize_states: bool = False,
+    worst_case: bool = True,
+    with_noise: bool = False,
+    device: str = 'cpu',
+) -> tuple[float, int]:
     model.eval()
     model.to(device=device)
 
     state_mean = torch.from_numpy(state_mean).to(device=device)
     state_std = torch.from_numpy(state_std).to(device=device)
 
-    state, _ = env.reset()
+    state = env.reset()
     if with_noise:
         state = state + np.random.normal(0, 0.1, size=state.shape)
 
@@ -173,60 +277,59 @@ def evaluate_episode(
         
         if model_type == 'dt':
             action = model.get_action(
-                states=normalized_states.to(dtype=torch.float32),
-                actions=actions.to(dtype=torch.float32),
-                rewards=rewards.to(dtype=torch.float32),
-                returns_to_go=target_return.to(dtype=torch.float32),
-                timesteps=timesteps.to(dtype=torch.long),
+                states=normalized_states,
+                actions=actions,
+                rewards=rewards,
+                returns_to_go=target_return,
+                timesteps=timesteps,
                 batch_size=1
             )[0, -1]
-            
         elif model_type == 'adt':
             action = model.get_action(
-                states=normalized_states.to(dtype=torch.float32),
-                actions=actions.to(dtype=torch.float32),
-                adv_actions=adv_actions.to(dtype=torch.float32),
-                rewards=rewards.to(dtype=torch.float32),
-                returns_to_go=target_return.to(dtype=torch.float32),
-                timesteps=timesteps.to(dtype=torch.long),
+                states=normalized_states,
+                actions=actions,
+                adv_actions=adv_actions,
+                rewards=rewards,
+                returns_to_go=target_return,
+                timesteps=timesteps,
                 batch_size=1
             )[0, -1]
         elif model_type == "bc":
             action = model.get_action(
-                states=normalized_states.to(dtype=torch.float32),
-                actions=actions.to(dtype=torch.float32),
-                rewards=rewards.to(dtype=torch.float32),
+                states=normalized_states,
+                actions=actions,
+                rewards=rewards,
             )
 
         # Handle discrete and continuous action spaces
         if action_type == 'discrete':
             act_probs = F.softmax(action, dim=-1)
-            action = Categorical(probs=act_probs).sample()
-            one_hot_action = torch.zeros(1, act_dim).float()
-            one_hot_action[0, action] = 1
+            action_idx = Categorical(probs=act_probs).sample()
+            one_hot_action = torch.zeros(1, act_dim, device=device, dtype=torch.float32)
+            one_hot_action[0, action_idx] = 1.0
             actions[-1] = one_hot_action
+            action_for_step = one_hot_action.detach().cpu().numpy()[0]  # [2]
         else:
             actions[-1] = action
+            action_for_step = action.detach().cpu().numpy()
 
-        action = action.detach().cpu().numpy()
-
-        if worst_case and env_name in ["gambling", "toy", "mstoy"]:
-            state, reward, terminated, truncated, infos = worst_case_env_step(state, action, t, env_name, env)
+        if worst_case and env_name in ["gambling", "toy", "mstoy", "kuhn_poker"]:
+            state, reward, terminated, truncated, infos = worst_case_env_step(state, action_for_step, t, env_name, env)
         else:
-            state, reward, terminated, truncated, infos = env.step(action)
+            state, reward, terminated, truncated, infos = env.step(action_for_step)
 
         done = terminated or truncated
 
         # Handle adversarial action
         adv_a = infos.get("adv", infos.get("adv_action", None))
         if action_type == 'discrete':
-            one_hot_adv_action = torch.zeros(1, adv_act_dim).float()
+            one_hot_adv_action = torch.zeros(1, adv_act_dim, device=device, dtype=torch.float32)
             if adv_a is not None:
-                one_hot_adv_action[0, adv_a] = 1
+                one_hot_adv_action[0, adv_a] = 1.0
             adv_actions[-1] = one_hot_adv_action
         else:
             if adv_a is not None:
-                adv_actions[-1] = torch.from_numpy(adv_a)
+                adv_actions[-1] = torch.from_numpy(adv_a).to(device)
 
         # Update states, rewards, and timesteps
         curr_state = torch.from_numpy(state).to(device=device).reshape(1, state_dim)
@@ -292,8 +395,6 @@ def evaluate(
         tuple: List of returns and lengths for each episode.
     """
     test_env = task.test_env_cls()
-    if env_name == "connect_four":
-        test_env = GridWrapper(test_env)
 
     returns, lengths = [], []
     for _ in tqdm(range(num_eval_episodes)):

@@ -101,6 +101,5 @@ class MLP(torch.nn.Module):
         """
         # Pass the input through each layer in the network
         for layer in self.layers:
-            print(x.shape)
             x = layer(x)
         return x

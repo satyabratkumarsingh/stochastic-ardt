@@ -8,7 +8,8 @@ from collections import namedtuple
 from sklearn.preprocessing import LabelEncoder
 
 # Define the Trajectory namedtuple
-Trajectory = namedtuple("Trajectory", ["obs", "actions", "rewards", "adv_actions", "adv_rewards", "infos"])
+Trajectory = namedtuple("Trajectory", ["obs", "actions", "rewards", "adv_actions", "adv_rewards", "infos", "dones"])
+
 
 class BaseOfflineEnv:
 
@@ -18,7 +19,7 @@ class BaseOfflineEnv:
         self.horizon = horizon
         self.n_interactions = n_interactions
         self.p = p
-        self.state_dim = state_dim  # Added for state dimension
+        self.state_dim = 10  # Added for state dimension
         if test:
             return
 
@@ -162,13 +163,15 @@ def convert_dataset(dataset, state_dim=12):
 
         infos = [{'player_id': pid, 'adv': int(action == 1)} for pid, action in zip(episode['player_ids'], episode['num_actions'])]
 
+        dones = np.zeros(len(obs), dtype=bool)
         trajectory = Trajectory(
             obs=obs,
             actions=embeded_pr_actions,
             adv_actions=embedded_adv_actions,
             rewards=protagonist_reward,
             adv_rewards=adversary_reward,
-            infos=infos
+            infos=infos,
+            dones = dones
         )
         trajectories.append(trajectory)
     

@@ -1,0 +1,66 @@
+{
+    "os": "macOS-15.3-arm64-arm-64bit",
+    "python": "3.11.5",
+    "heartbeatAt": "2025-07-05T07:33:09.745663",
+    "startedAt": "2025-07-05T07:33:08.451888",
+    "docker": null,
+    "cuda": null,
+    "args": [
+        "--seed",
+        "3",
+        "--data_name",
+        "toy",
+        "--env_name",
+        "toy",
+        "--ret_file",
+        "offline_data/ardt_toy_seed3",
+        "--device",
+        "cpu",
+        "--algo",
+        "ardt",
+        "--config",
+        "configs/ardt/toy.yaml",
+        "--checkpoint_dir",
+        "checkpoints/ardt_toy_seed3",
+        "--model_type",
+        "dt",
+        "--K",
+        "4",
+        "--train_iters",
+        "1",
+        "--num_steps_per_iter",
+        "100",
+        "--run_implicit",
+        "True",
+        "--offline_file",
+        "kuhn_poker_cfr_expert_vs_random_results.json"
+    ],
+    "state": "running",
+    "program": "/Users/satya/code/Python/stochastic-ardt/main.py",
+    "codePathLocal": "main.py",
+    "codePath": "main.py",
+    "git": {
+        "remote": "https://github.com/satyabratkumarsingh/stochastic-ardt.git",
+        "commit": "0cfeea1be64de5a1e43588a27e7fa73e93d94c79"
+    },
+    "email": null,
+    "root": "/Users/satya/code/Python/stochastic-ardt",
+    "host": "MacBookPro.Home",
+    "username": "satya",
+    "executable": "/Users/satya/code/Python/stochastic-ardt/.venv/bin/python",
+    "cpu_count": 10,
+    "cpu_count_logical": 10,
+    "disk": {
+        "/": {
+            "total": 460.4317207336426,
+            "used": 315.7276191711426
+        }
+    },
+    "gpuapple": {
+        "type": "Apple M1 Pro",
+        "vendor": "sppci_vendor_Apple"
+    },
+    "memory": {
+        "total": 16.0
+    }
+}

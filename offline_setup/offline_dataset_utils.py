@@ -36,7 +36,7 @@ def one_hot_encode(state, state_mapping, state_dim):
         state_mapping[state] = one_hot_vector
     return state_mapping[state]
 
-def convert_dataset(dataset, state_dim=12):
+def convert_dataset(dataset, state_dim=10):
     trajectories = []
     state_mapping = {}
 
@@ -103,7 +103,7 @@ def get_offline_data(file_name):
         print("==============Offline Data file not found ================")
         raise
 
-def get_trajectory_for_offline(file_name, state_dim=12):
+def get_trajectory_for_offline(file_name, state_dim=10):
     raw_data = get_offline_data(file_name=file_name)
     trajectories = convert_dataset(raw_data, state_dim=state_dim)
     return trajectories

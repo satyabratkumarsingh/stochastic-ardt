@@ -1,0 +1,25 @@
+==================================================
+Starting new experiment: toy
+5000 trajectories, 15000 timesteps found
+Average return: -0.16, std: 1.41
+Max return: 2.00, min: -2.00
+==================================================
+offline_data/data_profile_ardt_toy_seed3.pkl
+Trained for iterations: 0
+  0%|                                                                                                                                                                        | 0/100 [00:00<?, ?it/s]
+Traceback (most recent call last):
+  File "/Users/satya/code/Python/stochastic-ardt/main.py", line 138, in <module>
+    experiment(
+  File "/Users/satya/code/Python/stochastic-ardt/decision_transformer/experiment.py", line 358, in experiment
+    outputs = trainer.train_iteration(
+              ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/satya/code/Python/stochastic-ardt/decision_transformer/decision_transformer/training/trainer.py", line 294, in train_iteration
+    train_loss = self.train_step()
+                 ^^^^^^^^^^^^^^^^^
+  File "/Users/satya/code/Python/stochastic-ardt/decision_transformer/decision_transformer/training/seq_trainer.py", line 11, in train_step
+    states, actions, rewards, dones, returns, timesteps, attention_mask = self._get_batch()
+                                                                          ^^^^^^^^^^^^^^^^^
+  File "/Users/satya/code/Python/stochastic-ardt/decision_transformer/decision_transformer/training/trainer.py", line 208, in _get_batch
+    s.append(cur_state[si:si + self.context_size].reshape(1, -1, self.train_configs.state_dim))
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: cannot reshape array of size 30 into shape (1,newaxis,12)
