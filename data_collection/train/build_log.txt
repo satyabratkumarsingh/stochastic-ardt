@@ -1,0 +1,26 @@
+Using pip 23.2.1 from /Users/satya/code/Python/stochastic-ardt/.venv/lib/python3.11/site-packages/pip (python 3.11)
+Collecting open-spiel
+  Using cached open_spiel-1.6.tar.gz (4.4 MB)
+  Installing build dependencies: started
+  Installing build dependencies: finished with status 'done'
+  Getting requirements to build wheel: started
+  Getting requirements to build wheel: finished with status 'done'
+  Preparing metadata (pyproject.toml): started
+  Preparing metadata (pyproject.toml): finished with status 'done'
+Requirement already satisfied: pip>=20.0.2 in /Users/satya/code/Python/stochastic-ardt/.venv/lib/python3.11/site-packages (from open-spiel) (23.2.1)
+Requirement already satisfied: attrs>=19.3.0 in /Users/satya/code/Python/stochastic-ardt/.venv/lib/python3.11/site-packages (from open-spiel) (24.2.0)
+Collecting absl-py>=0.10.0 (from open-spiel)
+  Obtaining dependency information for absl-py>=0.10.0 from https://files.pythonhosted.org/packages/8f/aa/ba0014cc4659328dc818a28827be78e6d97312ab0cb98105a770924dc11e/absl_py-2.3.1-py3-none-any.whl.metadata
+  Using cached absl_py-2.3.1-py3-none-any.whl.metadata (3.3 kB)
+Requirement already satisfied: numpy>=1.21.5 in /Users/satya/code/Python/stochastic-ardt/.venv/lib/python3.11/site-packages (from open-spiel) (2.0.1)
+Requirement already satisfied: scipy>=1.10.1 in /Users/satya/code/Python/stochastic-ardt/.venv/lib/python3.11/site-packages (from open-spiel) (1.15.3)
+Collecting ml-collections>=0.1.1 (from open-spiel)
+  Obtaining dependency information for ml-collections>=0.1.1 from https://files.pythonhosted.org/packages/ab/8a/18d4ff2c7bd83f30d6924bd4ad97abf418488c3f908dea228d6f0961ad68/ml_collections-1.1.0-py3-none-any.whl.metadata
+  Using cached ml_collections-1.1.0-py3-none-any.whl.metadata (22 kB)
+Requirement already satisfied: PyYAML in /Users/satya/code/Python/stochastic-ardt/.venv/lib/python3.11/site-packages (from ml-collections>=0.1.1->open-spiel) (6.0.1)
+Using cached absl_py-2.3.1-py3-none-any.whl (135 kB)
+Using cached ml_collections-1.1.0-py3-none-any.whl (76 kB)
+Building wheels for collected packages: open-spiel
+  Building wheel for open-spiel (pyproject.toml): started
+  Building wheel for open-spiel (pyproject.toml): finished with status 'error'
+Failed to build open-spiel

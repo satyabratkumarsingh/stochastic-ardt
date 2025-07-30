@@ -5,14 +5,26 @@ import sys
 import gym
 import numpy as np
 import torch
-
-from data_loading.load_mujoco import load_mujoco_env, Trajectory
+import pickle
 from decision_transformer.experiment import experiment
-from return_transforms.generate import generate_expected, generate_maxmin
+from return_transforms.generate import generate_maxmin
 from offline_setup.offline_dataset_utils import get_trajectory_for_offline
 from offline_setup.toy_env import ToyOfflineEnv
+from return_transforms.train_decision_tranformer import train_decision_transformer, evaluate_decision_transformer
+from return_transforms.load_max_min_traj import get_relabeled_trajectories
 
 MUJOCO_TARGETS_DICT = {'halfcheetah': [2000, 3000], 'hopper': [500, 1000], 'walker2d': [800, 1000]}
+
+
+def str2bool(v):
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ('yes', 'true', 't', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
 
 def set_seed_everywhere(seed: int, env: int | None = None):
     """
@@ -32,7 +44,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     # General arguments
-    parser.add_argument('--run_implicit', type=bool, required=False)
+    parser.add_argument('--run_implicit', type=str2bool, default=False)
     parser.add_argument('--offline_file', type=str, required=False)
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--data_name', type=str, required=True)
@@ -105,7 +117,8 @@ if __name__ == '__main__':
         print(f"Will save relabeled file to {variant['ret_file']}")
     
         #offline_trajs = get_trajectory_for_offline("kuhn_poker_cfr_expert_vs_random_results.json")
-        task = ToyOfflineEnv("kuhn_poker_cfr_expert_vs_random_results.json")
+        print(f"======== Loading offline file {variant['offline_file']}")
+        task = ToyOfflineEnv(variant['offline_file'])
         env = task.env_cls()
         trajs = task.trajs
         print("==============")
@@ -117,36 +130,42 @@ if __name__ == '__main__':
             "scale": 5.0, 
             "action_type": "discrete"
         }
-
-        # generate_maxmin(
-        #     env, 
-        #     trajs, 
-        #     variant['config'], 
-        #     variant['ret_file'], 
-        #     variant['device'], 
-        #     variant['n_cpu'], 
-        #     is_simple_model=variant['is_simple_maxmin_model'],
-        #     is_toy=(variant['env_name'] == 'toy'),
-        #     run_implicit=variant['run_implicit']
-        # )
-
-        # for test_adv in test_advs:   
-        #     variant['test_adv'] = test_adv
-        #     if variant['env_name'] in {'halfcheetah', 'hopper', 'walker2d'}:
-        #         env.reset_adv_agent(variant['test_adv'], variant['device'])
-
-        experiment(
-            task,
-            env,
-            env_params['max_ep_len'],
-            env_params['env_targets'],
-            env_params['scale'],
-            env_params['action_type'],
-            variant=vars(args)
+        ret_file = variant['ret_file']
+        generate_maxmin(
+            env, 
+            trajs, 
+            variant['config'], 
+            ret_file, 
+            variant['device'], 
+            variant['n_cpu'], 
+            is_simple_model=variant['is_simple_maxmin_model'],
+            is_toy=(variant['env_name'] == 'toy'),
+            run_implicit=variant['run_implicit']
         )
 
-# Trajectory(obs=[array([1., 0., 0., 0., 0., 0., 0.]), 
-# array([0., 0., 0., 1., 0., 0., 0.])], 
-# actions=[0, 0], rewards=[0, 6],
-#  infos=[{'adv': np.int64(2)}, {'adv': 0}], 
-#  policy_infos=[PolicyInfo(), PolicyInfo()])
+        loaded_relabeled_trajs, loaded_prompt_value = get_relabeled_trajectories(ret_file, run_implicit=variant['run_implicit'])
+            # --- Step 3: Train Decision Transformer ---
+        trained_dt_model = train_decision_transformer(
+            env=env,
+            relabeled_trajs=loaded_relabeled_trajs,
+            config_path=variant['config'],
+            device=variant['device'],
+            n_cpu=variant['n_cpu']
+        )
+            #--- Step 4: Evaluate Decision Transformer ---
+        final_eval_results = evaluate_decision_transformer(
+            dt_model=trained_dt_model,
+            env=env,
+            relabeled_trajs=loaded_relabeled_trajs,
+            prompt_value=loaded_prompt_value,
+            config_path=variant['config'],
+            device=variant['device'],
+            algo_name='ardt_dt',
+            returns_filename='kuhn_poker_eval_run',
+            dataset_name='kuhn_poker_relabel_data',
+            test_adv_name='worst_case_kuhn',
+            added_dataset_name='extra_data_dt',
+            added_dataset_prop=0.1
+        )
+
+        print(f"\nOverall pipeline finished. Final Evaluation Results: {final_eval_results}")

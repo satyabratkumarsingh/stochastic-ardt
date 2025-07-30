@@ -138,90 +138,6 @@ def worst_case_env_step(
 
     return new_state, reward, done, truncated, info
 
-# def worst_case_env_step(
-#         state: np.array, 
-#         action: np.array, 
-#         timestep: int,
-#         env_name: str, 
-#         env: BaseOfflineEnv
-#     ) -> tuple[np.array, float, bool, bool, dict]:
-#     """
-#     Function to simulate worst-case adversaries in toy environments.
-
-#     Args:
-#         state (np.array): Current state.
-#         action (np.array): Current action.
-#         timestep (int): Current timestep.
-#         env_name (str): Name of the environment.
-#         env (BaseOfflineEnv): Environment object.
-
-#     Returns:
-#         tuple: New state, reward, done, truncated, and info (incl. adversarial action).
-#     """
-#     new_state_idx = -1
-#     adv_action = np.random.choice(2, 1)
-    
-#     _, reward, terminated, _ = env.step(action)
-#     done = terminated
-    
-#     if env_name == "gambling":
-#         if timestep == 0:
-#             if action == 0:
-#                 w_reward = -15 
-#             elif action == 1:
-#                 w_reward = -6
-#             else:
-#                 w_reward = 1
-#         elif timestep == 1:
-#             reward = w_reward
-#             assert done
-#     elif env_name == "toy":
-#         if timestep == 0:
-#             if action == 0:
-#                 env.w_reward = 0
-#             else:
-#                 env.w_reward = 1
-#         else:
-#             #print(env.w_reward)
-#             reward = env.w_reward
-#             if not isinstance(action, torch.Tensor):
-#                 action = torch.tensor(action)
-#             if reward != 0 or torch.any(action != -10):  # implies it's a real move
-#             # only then check for done
-#                 if timestep == 1:
-#                     assert done
-#     elif env_name == "mstoy":
-#         done = False
-#         if timestep == 0:
-#             if action > 0:
-#                 reward = 4
-#                 done = True
-#             else:
-#                 new_state_idx = 1
-#                 reward = 0
-#                 adv_action = 0
-#         else:
-#             reward = env.reward_list[action + (state.argmax() - 1) * 3]
-#             done = True
-#     elif env_name == "new_mstoy":
-#         done = False
-#         if timestep == 0:
-#             if action > 0:
-#                 reward = 4
-#                 done = True
-#             else:
-#                 new_state_idx = 1
-#                 reward = 0
-#         else:
-#             reward = env.reward_list[action * 2 + (state.argmax() - 1) * 3]
-#             done = True
-#     else:
-#         raise RuntimeError("Environment Error.")
-
-#     new_state = np.eye(state.size)[new_state_idx] if new_state_idx != -1 else state
-#     return new_state, reward, done, False, {"adv_action": adv_action}
-  
-
 def evaluate_episode(
     env,
     env_name: str,
@@ -394,7 +310,7 @@ def evaluate(
     Returns:
         tuple: List of returns and lengths for each episode.
     """
-    test_env = task.test_env_cls()
+    test_env = task
 
     returns, lengths = [], []
     for _ in tqdm(range(num_eval_episodes)):

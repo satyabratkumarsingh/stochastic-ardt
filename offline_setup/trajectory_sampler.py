@@ -48,7 +48,7 @@ class TrajectorySampler():
 
         env = self.env
         print(env.reset())
-        obs, _ = env.reset()
+        obs = env.reset()
         reward = None
 
         pbar = tqdm(total=n_interactions)
@@ -62,8 +62,8 @@ class TrajectorySampler():
 
             policy_infos_.append(policy_info)
             actions_.append(action)
-
-            obs, reward, done, _, info = env.step(action)
+          
+            obs, reward, done, info = env.step(action)
 
             t += 1
             infos_.append(info)
@@ -88,7 +88,7 @@ class TrajectorySampler():
                 if n_trajs is not None and len(trajs) == n_trajs:
                     break
 
-                obs, _ = env.reset()
+                obs = env.reset()
                 self.policy.reset()
                 reward = None
 

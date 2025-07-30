@@ -1,2 +1,7 @@
 .venv
 .vscode
+*.json
+*.pkl
+*.log
+wandb
+

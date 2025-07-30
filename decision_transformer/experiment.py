@@ -112,11 +112,11 @@ def experiment(
     for path in trajectories:
         path['rtg'] = _discount_cumsum(path['rewards'], gamma=1.)
         if env_name == "connect_four":
-            cur_state = np.array([obs for obs in path['observations']])
+            cur_state = np.array([obs for obs in path['obs']])
             states.append(cur_state.reshape(cur_state.shape[0], -1))
         else:
-            states.append(path['observations'])
-        traj_lens.append(len(path['observations']))
+            states.append(path['obs'])
+        traj_lens.append(len(path['obs']))
         returns.append(path['rewards'].sum())
 
     traj_lens, returns = np.array(traj_lens), np.array(returns)
