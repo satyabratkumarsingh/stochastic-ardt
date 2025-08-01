@@ -4,4 +4,9 @@
 *.pkl
 *.log
 wandb
+__pycache__/
+Run/
+checkpoints/
+ardt_validation_results/
+
 

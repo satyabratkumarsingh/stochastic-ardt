@@ -157,14 +157,7 @@ class KuhnPokerEnv(gym.Env):
         done = False
         truncated = False
         info = {"player_id": self.player_turn, "adv_action": -1} # Default adversary action to -1 (none)
-        
-        # --- NEW PRINTS INSIDE ENV.STEP ---
-        print(f"\n--- Inside KuhnPokerEnv.step() at start (Timestep in episode: {len(self.history)}) ---")
-        print(f"  Incoming action: {action} (for player {self.player_turn})")
-        print(f"  Current self.history: {self.history}")
-        print(f"  Player Card: {['J','Q','K'][self.player_card_idx]} ({self.player_card_idx}), Opponent Card: {['J','Q','K'][self.opponent_card_idx]} ({self.opponent_card_idx})")
-        # --- END NEW PRINTS ---
-
+       
         # Important: The `worst_case_env_step` needs to call `env.step` with the
         # correct player's action (agent's or adversary's forced action).
         # Your current `worst_case_env_step` always passes the agent's action.
@@ -201,10 +194,6 @@ class KuhnPokerEnv(gym.Env):
                     done = True
                 self.player_turn = -1 # Game ends
             
-            # --- NEW PRINT ---
-            print(f"  Player 0 (Agent) processed action. self.history: {self.history}, Next Player: {self.player_turn}")
-            # --- END NEW PRINT ---
-
             if not done: # If game didn't end, return control
                 return self.get_obs(), reward, done, truncated, info
 
@@ -239,10 +228,7 @@ class KuhnPokerEnv(gym.Env):
                         else:
                             reward = -2 # P0 loses
                         done = True
-                
-                # --- NEW PRINT ---
-                print(f"  Player 1 (Adversary) processed action. self.history: {self.history}, Next Player: {self.player_turn}")
-                # --- END NEW PRINT ---
+            
 
                 if not done: # If game didn't end, return control
                     return self.get_obs(), reward, done, truncated, info
@@ -251,9 +237,7 @@ class KuhnPokerEnv(gym.Env):
                 # Should not happen in basic Kuhn Poker logic if sequence is correctly managed
                 pass # Or raise error
 
-        # --- FINAL PRINT FOR ENV.STEP ---
-        print(f"  End of KuhnPokerEnv.step(). Final state before return: reward={reward}, done={done}")
-        # --- END FINAL PRINT ---
+       
         
         # If the game didn't end, and it's not a turn change where we returned early, something is off.
         # This return is for when a game scenario leads to termination.

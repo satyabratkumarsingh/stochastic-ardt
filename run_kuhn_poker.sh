@@ -23,6 +23,7 @@ python -Xfrozen_modules=off -m debugpy --listen 5678 --wait-for-client main.py \
     --train_iters 1 \
     --num_steps_per_iter 100 \
     --run_implicit False \
+    --game_name "kuhn_poker" \
     --offline_file "kuhn_poker_cfr_expert_vs_expert_results.json"
 
 
