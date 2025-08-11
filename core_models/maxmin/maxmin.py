@@ -22,18 +22,18 @@ def expectile_loss(diff: torch.Tensor, alpha: float) -> torch.Tensor:
     return weight * (diff ** 2)
 
 
-def evaluate_models(R_max_model, R_min_model, dataloader, device, scale):
+def evaluate_models(R_max_model, R_min_model, dataloader, device):
     """Evaluate R_max and R_min on one batch and print mean predictions + gap."""
     with torch.no_grad():
         obs, acts, adv_acts, ret, seq_len = next(iter(dataloader))
         obs = obs.to(device)
         acts = acts.to(device)
         adv_acts = adv_acts.to(device)
-        ret_scaled = (ret / scale).to(device)
+        ret = ret.to(device)  # No scaling
 
         pred_max = R_max_model(obs, acts).mean().item()
         pred_min = R_min_model(obs, acts, adv_acts).mean().item()
-        true_mean = ret_scaled.mean().item()
+        true_mean = ret.mean().item()
 
     gap = pred_max - pred_min
     symbol = "✅" if gap >= 0 else "❌"
@@ -43,15 +43,13 @@ def evaluate_models(R_max_model, R_min_model, dataloader, device, scale):
     return pred_max, pred_min, gap
 
 
-
 def ardt_minimax_expectile_regression(
     trajs: list[Trajectory],
     obs_size: int,
     action_size: int,
     adv_action_size: int,
     train_args: dict,
-    device: str,
-    scale: float = 1.0
+    device: str
 ) -> tuple[torch.nn.Module, torch.nn.Module]:
 
     # Models
@@ -80,6 +78,7 @@ def ardt_minimax_expectile_regression(
     print(f"Alpha_max (optimistic): {alpha_max}")
     print(f"Alpha_min (pessimistic): {alpha_min}")
     print("Using ALTERNATING updates during minimax phase")
+    print("NO SCALING - using raw return values")
 
     # ---- Warmup ----
     for epoch in range(warmup_epochs):
@@ -90,20 +89,20 @@ def ardt_minimax_expectile_regression(
             obs = obs.view(batch_size, obs_len, -1).to(device)
             acts = acts.to(device)
             adv_acts = adv_acts.to(device)
-            ret_scaled = (ret / scale).to(device)
+            ret = ret.to(device)  # No scaling
             timestep_mask = torch.arange(obs_len, device=device)[None, :] < seq_len[:, None]
             
             # R_max
             max_optimizer.zero_grad()
             max_pred = R_max_model(obs, acts).view(batch_size, obs_len)
-            max_loss = (((max_pred - ret_scaled) ** 2) * timestep_mask).sum() / timestep_mask.sum()
+            max_loss = (((max_pred - ret) ** 2) * timestep_mask).sum() / timestep_mask.sum()
             max_loss.backward()
             max_optimizer.step()
 
             # R_min
             min_optimizer.zero_grad()
             min_pred = R_min_model(obs, acts, adv_acts).view(batch_size, obs_len)
-            min_loss = (((min_pred - ret_scaled) ** 2) * timestep_mask).sum() / timestep_mask.sum()
+            min_loss = (((min_pred - ret) ** 2) * timestep_mask).sum() / timestep_mask.sum()
             min_loss.backward()
             min_optimizer.step()
             
@@ -112,7 +111,7 @@ def ardt_minimax_expectile_regression(
             num_batches += 1
         
         print(f"Warmup Epoch {epoch}: Max Loss = {total_max_loss/num_batches:.6f}, Min Loss = {total_min_loss/num_batches:.6f}")
-        evaluate_models(R_max_model, R_min_model, dataloader, device, scale)
+        evaluate_models(R_max_model, R_min_model, dataloader, device)
 
     # ---- Minimax with Alternating Updates ----
     for epoch in range(minimax_epochs):
@@ -128,7 +127,7 @@ def ardt_minimax_expectile_regression(
             obs = obs.view(batch_size, obs_len, -1).to(device)
             acts = acts.to(device)
             adv_acts = adv_acts.to(device)
-            ret_scaled = (ret / scale).to(device)
+            ret = ret.to(device)  # No scaling
             
             # Mask for valid timesteps
             timestep_mask = torch.arange(obs_len, device=device)[None, :] < seq_len[:, None]
@@ -138,7 +137,7 @@ def ardt_minimax_expectile_regression(
             
             # Immediate rewards for Bellman backup
             if obs_len > 1:
-                immediate_rewards = ret_scaled[:, :-1] - gamma * ret_scaled[:, 1:]
+                immediate_rewards = ret[:, :-1] - gamma * ret[:, 1:]
             
             if update_max:
                 # --- R_max update (MAXIMIZE step) ---
@@ -162,7 +161,6 @@ def ardt_minimax_expectile_regression(
                 max_optimizer.step()
                 
                 total_max_loss += max_loss.item()
-                # Set min_loss to 0 for logging since we didn't update R_min
                 total_min_loss += 0.0
                 
             else:
@@ -186,7 +184,7 @@ def ardt_minimax_expectile_regression(
                     if valid_terminals.sum() > 0:
                         terminal_seq_len = (seq_len[valid_terminals] - 1).clamp(0, obs_len - 1)
                         leaf_loss = ((min_pred_all[valid_terminals, terminal_seq_len] - 
-                                    ret_scaled[valid_terminals, terminal_seq_len]) ** 2).mean()
+                                    ret[valid_terminals, terminal_seq_len]) ** 2).mean()
                     else:
                         leaf_loss = torch.tensor(0.0, device=device)
                     
@@ -199,13 +197,12 @@ def ardt_minimax_expectile_regression(
                 min_optimizer.step()
                 
                 total_min_loss += min_loss.item()
-                # Set max_loss to 0 for logging since we didn't update R_max
                 total_max_loss += 0.0
 
             num_batches += 1
 
         print(f"Minimax Epoch {epoch} ({update_desc}): Max Loss = {total_max_loss/num_batches:.6f}, Min Loss = {total_min_loss/num_batches:.6f}")
-        evaluate_models(R_max_model, R_min_model, dataloader, device, scale)
+        evaluate_models(R_max_model, R_min_model, dataloader, device)
 
     return R_max_model, R_min_model
 
@@ -231,11 +228,8 @@ def maxmin(
     print(f"Dataset size: {len(trajs)} episodes")
     print(f"Reward stats: mean={np.mean(all_rewards):.3f}, std={np.std(all_rewards):.3f}")
     
-    # Setup scaling
-    scale = train_args.get('scale', 1.0)
-    if np.std(all_rewards) > 0:
-        scale = max(1.0, np.std(all_rewards) / 1.0)
-    print(f"========= Using scale: {scale:.4f}")
+    # No scaling - work with raw values
+    print("========= Using NO SCALING - raw return values")
     
     # Setup action spaces
     if isinstance(action_space, gym.spaces.Discrete):
@@ -252,7 +246,7 @@ def maxmin(
     # STEP 1: Minimax Expectile Regression (Core ARDT contribution)
     print("\n=== Step 1: Minimax Expectile Regression ===")
     R_max_model, R_min_model = ardt_minimax_expectile_regression(
-        trajs, obs_size, action_size, adv_action_size, train_args, device, scale
+        trajs, obs_size, action_size, adv_action_size, train_args, device
     )
     
     # STEP 2: Trajectory Relabeling with Minimax Returns-to-Go
@@ -276,22 +270,18 @@ def maxmin(
                 acts = acts.view(1, -1, action_size)
                 adv_acts = adv_acts.view(1, -1, adv_action_size)
             
-            # Get minimax return predictions
+            # Get minimax return predictions (no scaling)
             minimax_returns = R_max_model(obs, acts.float()).squeeze().cpu().numpy()
-            
-            # Scale back to original scale
-            minimax_returns_scaled = minimax_returns * scale
             
             # Create new trajectory with relabeled returns-to-go
             relabeled_traj = deepcopy(traj)
             
             # Replace returns-to-go with minimax estimates
-            # This is the key step that makes it ARDT!
             new_returns_to_go = []
             for t in range(len(traj.obs)):
-                new_returns_to_go.append(minimax_returns_scaled[t])
+                new_returns_to_go.append(minimax_returns[t])
             
-            # Store relabeled trajectory (implementation dependent on your data structure)
+            # Store relabeled trajectory
             relabeled_traj.minimax_returns_to_go = new_returns_to_go 
             relabeled_trajs.append(relabeled_traj)
     
@@ -304,6 +294,7 @@ def maxmin(
         prompt_value = np.max(initial_minimax_returns_all)
     else:
         prompt_value = 0.0
+    
     # STEP 3: Decision Transformer Training
     print("\n=== Step 3: Decision Transformer Training ===")
     

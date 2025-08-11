@@ -96,8 +96,8 @@ class BehaviourCloningTrainer:
         bc_model_path = behaviour_cloning_model_name(seed=self.seed, game=self.game_name, is_implicit=is_implicit)    
 
         first_traj = relabeled_trajs[0]
-        obs_size = len(first_traj.obs[0])
-        action_size = get_action_dim(first_traj.actions)
+        self.obs_size = len(first_traj.obs[0])
+        self.action_size = get_action_dim(first_traj.actions)
 
         # Fixed action type detection
         sample_actions = []
@@ -122,8 +122,8 @@ class BehaviourCloningTrainer:
         
         # Create model with max_length=1 for single-step BC
         self.model = MLPBCModel(
-            state_dim=obs_size,
-            act_dim=action_size,
+            state_dim=self.obs_size,
+            act_dim=self.action_size,
             hidden_size=self.bc_train_args.get('hidden_size', 256),
             n_layer=self.bc_train_args.get('n_layer', 3),
             dropout=self.bc_train_args.get('dropout', 0.1),
@@ -213,10 +213,8 @@ class BehaviourCloningTrainer:
             epoch_avg_loss = np.mean(epoch_losses)
             print(f"Epoch {epoch+1} completed. Average loss: {epoch_avg_loss:.4f}")
             
-            # Save checkpoint every few epochs
-            if (epoch + 1) % 5 == 0:
-                self.save_checkpoint(bc_model_path)
-        
+            
+
         # Save final checkpoint
         self.save_checkpoint(bc_model_path)
         print("Training completed!")
@@ -225,17 +223,17 @@ class BehaviourCloningTrainer:
 
     def save_checkpoint(self, filename: str = None):
         """Save model checkpoint."""
-        if filename is None:
-            filename = f'model_epoch_{self.epoch}_step_{self.step}.pt'
-        
+        # Save model
         checkpoint = {
-            'model_state_dict': self.model.state_dict(),
-            'optimizer_state_dict': self.optimizer.state_dict(),
-            'epoch': self.epoch,
-            'step': self.step,
-            'train_losses': self.train_losses,
-            
+            "model_state_dict": self.model.state_dict(),
+            "optimizer_state_dict": self.optimizer.state_dict(),
+            "training_losses": self.train_losses,
+            "model_params": {
+                "obs_size": self.obs_size,
+                "action_size": self.action_size,
+                "action_type": self.action_type,
+                "horizon": 1
+            }
         }
-        
         torch.save(checkpoint, filename)
         print(f"Checkpoint saved to {filename}")

@@ -46,61 +46,14 @@ class KuhnPokerEnv(gym.Env):
         # We'll stick to your `get_obs` for now but focus on `step`.
 
     def get_obs(self):
-        # This state mapping is custom and crucial for your DT. Ensure it's correct.
-        # For now, let's just return a placeholder, or a one-hot based on player_card_idx.
-        # You need to ensure this actually creates distinct states for the DT to learn.
-
-        # A more standard observation for Kuhn Poker:
-        # Player's card (one-hot) + actions taken so far (one-hot or indices)
-        obs = np.zeros(self.observation_space.shape, dtype=np.float32)
-        if self.player_card_idx is not None:
-            # Assuming first 3 dims are for player card J, Q, K
-            obs[self.player_card_idx] = 1.0 
-        
-        # Then encode history into the rest of the observation.
-        # This is where your state_mapping comes in.
-        # For debugging, let's keep it simple:
-        # You need to fill this out according to how you encode game history into state.
-        # Example for history: 0=P, 1=B. History 'PB' means `[0,1]`.
-        # You need to map [P0_action, P1_action, P0_final_action] onto your 12-dim state.
-        # The `_get_state_key` logic seems to be creating these distinct states.
-        
         state_key = self._get_state_key()
-        # If your state_mapping is supposed to provide the full 12-dim state, let's trust it.
-        # BUT the way it creates new indices might lead to duplicate states if not careful.
         if state_key not in self.state_mapping:
-            # This logic will just fill the next available index.
-            # This won't create meaningful states for a DT to learn from
-            # if the states are not distinct in a semantically useful way.
-            # For a given (player_card, history), it should always map to the same observation.
-            current_index = len(self.state_mapping) 
-            # This is problematic. If J-P maps to index 0, Q-P should map to something else.
-            # It seems to treat all unique history-card combos as a new index.
-            # This is more like state ID generation, not state representation.
-
-            # For now, let's assume `get_obs` needs to convert the actual game state
-            # (player_card_idx, history) into the 12-dim vector.
-            # This means your `state_mapping` needs to be pre-defined or more robust.
-            # Let's simplify and make `get_obs` just return a one-hot of the player card
-            # and zeros for history for now, just to get rewards working.
-            # YOU MUST REPLACE THIS WITH YOUR ACTUAL STATE ENCODING.
-            # For the 12-dim space, you could have:
-            # [P0_card_J, P0_card_Q, P0_card_K, History_empty, History_P, History_B, History_PP, History_PB, History_BP, History_BB, History_BP_P0F, History_BP_P0C]
-            # This is complex. Let's return a simple fixed state for now to debug rewards.
-            # return np.zeros(self.observation_space.shape, dtype=np.float32) # For debugging reward only
-            
-            # Let's re-use your state_mapping approach for now, but be aware it's unusual.
-            index = len(self.state_mapping) # Current size of mapping is the next available index
-            # This effectively makes a new one-hot for every unique (card, history) combination encountered.
-            # Max possible states for Kuhn: 3 cards * (1 (initial) + 2 (P0 pass/bet) + 4 (P1 pass/bet) + 2 (P0's final))
-            # ~ 3 * (1+2+4+2) = 27 theoretical game states. 12-dim is small for one-hotting all.
-            # If 12 means one-hot of 12 distinct abstract states, this is fine.
-            # Otherwise, it might be an issue. Let's proceed assuming this is what you intended.
-            index = min(index, self.observation_space.shape[0] - 1) # Cap index at 11
-            one_hot = np.zeros(self.observation_space.shape[0], dtype=np.uint8)
+            index = min(len(self.state_mapping), self.observation_space.shape[0] - 1)
+            one_hot = np.zeros(self.observation_space.shape[0], dtype=np.float32)
             one_hot[index] = 1
             self.state_mapping[state_key] = one_hot
-        return self.state_mapping[state_key].astype(np.float32)
+        obs = self.state_mapping[state_key].astype(np.float32)
+        return obs
 
 
     def _get_state_key(self):
@@ -141,104 +94,55 @@ class KuhnPokerEnv(gym.Env):
             del self.actions_taken # Clear it if it's meant for a single episode
         self.actions_taken = [] # For compatibility with worst_case_env_step
 
+
         return self.get_obs()
 
 
     def step(self, action):
-        """
-        Take a step in the environment with the given action.
-        `action` is the action of the *current* player (`self.player_turn`).
-        """
         action = int(action)
         if action not in [0, 1]:
             raise ValueError(f"Invalid action: {action}, must be 0 (pass) or 1 (bet)")
-        
         reward = 0
         done = False
         truncated = False
-        info = {"player_id": self.player_turn, "adv_action": -1} # Default adversary action to -1 (none)
-       
-        # Important: The `worst_case_env_step` needs to call `env.step` with the
-        # correct player's action (agent's or adversary's forced action).
-        # Your current `worst_case_env_step` always passes the agent's action.
-        # This is where the core issue for game flow lies.
-
-        # Let's assume for now that the `action` argument passed to this `step` method
-        # is always the *correct* action for `self.player_turn`.
-        # This means `worst_case_env_step` MUST ensure this.
-
-        current_player_action = action # This is the action from the agent or adversary.
-
-        if self.player_turn == 0: # Agent's turn
-            self.history.append(current_player_action)
-            
-            if len(self.history) == 1: # P0's first action
-                if current_player_action == 0: # P0 Pass
-                    self.player_turn = 1 # Turn to P1
-                elif current_player_action == 1: # P0 Bet
-                    self.pot += 1 # P0 contributes to pot
-                    self.player_turn = 1 # Turn to P1
-            
-            # This is the path for P0's *second* action, only if P0 Pass, P1 Bet
-            elif len(self.history) == 3 and self.history[:2] == [0, 1]: # P0 passed, P1 bet, now P0 acts again
-                if current_player_action == 0: # P0 Folds
-                    reward = -2 # P0 loses ante + P1's bet
+        info = {"player_id": self.player_turn, "adv_action": -1}
+  
+        if self.player_turn == 0:
+            self.history.append(action)
+            if len(self.history) == 1:
+                if action == 0:
+                    self.player_turn = 1
+                elif action == 1:
+                    self.pot += 1
+                    self.player_turn = 1
+            elif len(self.history) == 3 and self.history[:2] == [0, 1]:
+                if action == 0:
+                    reward = -2
                     done = True
-                elif current_player_action == 1: # P0 Calls (showdown)
-                    self.pot += 1 # P0 contributes to pot
-                    # Showdown
-                    if self.player_card_idx > self.opponent_card_idx:
-                        reward = 2 # P0 wins (ante + P1's bet)
-                    else:
-                        reward = -2 # P0 loses
+                elif action == 1:
+                    self.pot += 1
+                    reward = 2 if self.player_card_idx > self.opponent_card_idx else -2
                     done = True
-                self.player_turn = -1 # Game ends
-            
-            if not done: # If game didn't end, return control
-                return self.get_obs(), reward, done, truncated, info
-
-        elif self.player_turn == 1: # Adversary's turn
-            # Assuming `current_player_action` is the adversary's choice (forced by wrapper)
-            self.history.append(current_player_action)
-            info["adv_action"] = current_player_action # Store the actual adv action taken
-
-            # Based on the sequence of moves and current player's action
-            # P1 acts after P0's initial move
+                self.player_turn = -1
+        elif self.player_turn == 1:
+            self.history.append(action)
+            info["adv_action"] = action
             if len(self.history) == 2:
-                # P0's first action was self.history[0]
-                # P1's action is current_player_action
-                
-                if self.history[0] == 0: # P0 Passed
-                    if current_player_action == 0: # P1 Pass (Pass-Pass) -> Showdown
+                if self.history[0] == 0:
+                    if action == 0:
                         reward = 1 if self.player_card_idx > self.opponent_card_idx else -1
                         done = True
-                    elif current_player_action == 1: # P1 Bet (Pass-Bet) -> P0 acts again
-                        self.pot += 1 # P1 contributes to pot
-                        self.player_turn = 0 # Turn to P0
-                
-                elif self.history[0] == 1: # P0 Bet
-                    self.pot += 1 # Add P0's bet to pot for P1's consideration
-                    if current_player_action == 0: # P1 Folds (Bet-Pass) -> P0 wins
-                        reward = 1 # P0 wins ante + P0's bet
+                    elif action == 1:
+                        self.pot += 1
+                        self.player_turn = 0
+                elif self.history[0] == 1:
+                    self.pot += 1
+                    if action == 0:
+                        reward = 1
                         done = True
-                    elif current_player_action == 1: # P1 Calls (Bet-Bet) -> Showdown
-                        self.pot += 1 # P1 contributes to pot
-                        if self.player_card_idx > self.opponent_card_idx:
-                            reward = 2 # P0 wins (ante + P0 bet + P1 bet)
-                        else:
-                            reward = -2 # P0 loses
+                    elif action == 1:
+                        self.pot += 1
+                        reward = 2 if self.player_card_idx > self.opponent_card_idx else -2
                         done = True
-            
-
-                if not done: # If game didn't end, return control
-                    return self.get_obs(), reward, done, truncated, info
-
-            else:
-                # Should not happen in basic Kuhn Poker logic if sequence is correctly managed
-                pass # Or raise error
-
-       
-        
-        # If the game didn't end, and it's not a turn change where we returned early, something is off.
-        # This return is for when a game scenario leads to termination.
+    
         return self.get_obs(), reward, done, truncated, info

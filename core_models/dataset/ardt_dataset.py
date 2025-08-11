@@ -14,29 +14,27 @@ import pickle
 import os
 import yaml
 from pathlib import Path
-
-# --- Your Provided ARDTDataset Class ---
 import torch
 from torch.utils.data import IterableDataset
 
-# Dummy return_labels for demonstration since it's from an external utility
-def return_labels(traj, gamma, new_rewards):
-    """
-    Dummy implementation of return_labels for demonstration.
-    In a real scenario, this would compute discounted returns.
-    """
-    if new_rewards and hasattr(traj, 'new_rewards') and traj.new_rewards is not None:
+def return_labels(traj, gamma, new_rewards, use_minimax_returns=False):
+   
+    # Choose which rewards/returns to use
+    if use_minimax_returns and hasattr(traj, 'minimax_returns_to_go') and traj.minimax_returns_to_go is not None:
+        rewards_to_use = traj.minimax_returns_to_go
+    elif new_rewards and hasattr(traj, 'new_rewards') and traj.new_rewards is not None:
         rewards_to_use = traj.new_rewards
     else:
         rewards_to_use = traj.rewards
 
-    # Calculate discounted returns
+    # Calculate discounted returns from chosen rewards/values
     discounted_returns = []
     current_return = 0
     for r in reversed(rewards_to_use):
         current_return = r + gamma * current_return
         discounted_returns.append(current_return)
     return discounted_returns[::-1]
+
 
 
 class ARDTDataset(IterableDataset):

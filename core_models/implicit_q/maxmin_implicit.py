@@ -4,58 +4,30 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from tqdm.autonotebook import tqdm
-
-from data_loading.load_mujoco import Trajectory
+from copy import deepcopy
+from data_class.trajectory import Trajectory
 from core_models.base_models.base_model import RtgFFN, RtgLSTM
-from core_models.dataset.ardt_dataset import ARDTDataset
 from core_models.implicit_q.value_net import ValueNet
+from core_models.dataset.ardt_dataset import ARDTDataset
 
+# Loss weights from your stable implementation
 IQL_LOSS_WEIGHT = 0.2
 Q_ONLY_LOSS_WEIGHT = 0.2
 
-def _iql_loss_v(
-    q_values: torch.Tensor,
-    v_values: torch.Tensor,
-    acts_mask: torch.Tensor,
-    tau: float = 0.7
-) -> torch.Tensor:
-    """
-    IQL Value loss: L_V(ψ) = E[(τ - I(Q_ψ(s,a) - V_ψ(s) < 0))(Q_ψ(s,a) - V_ψ(s))^2]
+def _iql_loss_v(q_values, v_values, acts_mask, tau=0.7):
+    """Simplified V loss for debugging."""
+    q_flat = q_values.squeeze(-1)
+    v_flat = v_values.squeeze(-1) 
+    valid_mask = (~acts_mask).float()
     
-    Args:
-        q_values: Q-values, shape [batch_size, seq_len, 1]
-        v_values: V-values, shape [batch_size, seq_len, 1] 
-        acts_mask: Mask for padded timesteps (True for padded), shape [batch_size, seq_len]
-        tau: Expectile parameter (0.7 for conservative estimates)
-    """
-    q_values = q_values.squeeze(-1)  # [batch_size, seq_len]
-    v_values = v_values.squeeze(-1)  # [batch_size, seq_len]
+    if valid_mask.sum() == 0:
+        return torch.tensor(0.0, device=q_values.device, requires_grad=True)
     
-    # Compute Q - V difference
-    diff = q_values.detach() - v_values  # [batch_size, seq_len] - detach Q for stability
+    diff = q_flat.detach() - v_flat
+    weight = torch.where(diff < 0, 1 - tau, tau)
+    loss = ((weight * diff**2 * valid_mask).sum() / valid_mask.sum())
     
-    # IQL expectile weight: τ - I(diff < 0)
-    # When diff < 0 (V > Q), weight = tau - 1 (negative, reduces loss)
-    # When diff >= 0 (V <= Q), weight = tau (positive, increases loss)
-    indicator = (diff < 0).float()
-    weight = tau - indicator  # [batch_size, seq_len]
-    
-    # Valid mask (inverse of acts_mask)
-    valid_mask = (~acts_mask).float()  # [batch_size, seq_len]
-    
-    # Ensure we have valid timesteps
-    if valid_mask.sum() > 0:
-        # Compute weighted MSE loss
-        squared_diff = diff ** 2
-        weighted_loss = weight * squared_diff * valid_mask
-        loss = weighted_loss.sum() / valid_mask.sum()
-        
-        # Add small epsilon to avoid zero loss
-        loss = loss + 1e-8
-    else:
-        loss = torch.tensor(1e-8, device=q_values.device, requires_grad=True)
-    
-    return torch.clamp(loss, 1e-8, 1e6)
+    return loss.clamp(min=1e-8)
 
 
 def _iql_loss_q(
@@ -67,13 +39,6 @@ def _iql_loss_q(
 ) -> torch.Tensor:
     """
     IQL Q-loss: L_Q(θ) = E[(r + γV_ψ(s') - Q_θ(s,a))^2]
-    
-    Args:
-        q_values: Q-values, shape [batch_size, seq_len, 1]
-        rewards: Single-step rewards, shape [batch_size, seq_len-1, 1]
-        v_values: V-values, shape [batch_size, seq_len, 1]
-        acts_mask: Mask for padded timesteps, shape [batch_size, seq_len]
-        gamma: Discount factor
     """
     batch_size, seq_len, _ = q_values.shape
     
@@ -181,57 +146,7 @@ def _q_only_loss_min(
     return torch.clamp(loss, 0.0, 1e6)
 
 
-def _iql_loss_q_adv(
-    q_values: torch.Tensor,
-    rewards: torch.Tensor,
-    v_values: torch.Tensor,
-    acts_mask: torch.Tensor,
-    gamma: float
-) -> torch.Tensor:
-    """
-    IQL Q-loss for adversary: same as protagonist but for adversary Q-function
-    """
-    return _iql_loss_q(q_values, rewards, v_values, acts_mask, gamma)
-
-
-def _expectile_fn(
-    td_error: torch.Tensor,
-    acts_mask: torch.Tensor,
-    alpha: float = 0.7,
-    discount_weighted: bool = False
-) -> torch.Tensor:
-    """
-    Expectile loss function to focus on different quantiles of the TD-error distribution.
-    
-    Args:
-        td_error: TD errors, shape [batch_size, seq_len]
-        acts_mask: Mask for padded timesteps (True for padded), shape [batch_size, seq_len]
-        alpha: Expectile level (0.5 = mean, >0.5 = optimistic, <0.5 = pessimistic)
-        discount_weighted: Whether to apply temporal discounting
-    
-    Returns:
-        loss: Scalar expectile loss
-    """
-    # Create valid mask (inverse of acts_mask)
-    valid_mask = ~acts_mask  # [batch_size, seq_len]
-    
-    if valid_mask.sum() == 0:
-        return torch.tensor(0.0, device=td_error.device)
-    
-    # Compute expectile weights
-    weight = torch.where(td_error >= 0, alpha, 1 - alpha)
-    
-    # Compute expectile loss
-    loss = weight * (td_error ** 2) * valid_mask
-    
-    if discount_weighted:
-        # Apply temporal discounting (not implemented in original, keeping simple)
-        return loss.sum() / valid_mask.sum()
-    else:
-        return loss.sum() / valid_mask.sum()
-
-
-def evaluate_models(qsa_pr_model, qsa_adv_model, v_model, dataloader, device, scale):
+def evaluate_models(qsa_pr_model, qsa_adv_model, v_model, dataloader, device):
     """Evaluate Q_max, Q_min, and V on one batch and print mean predictions + gaps."""
     with torch.no_grad():
         obs, acts, adv_acts, ret, seq_len = next(iter(dataloader))
@@ -241,7 +156,7 @@ def evaluate_models(qsa_pr_model, qsa_adv_model, v_model, dataloader, device, sc
         obs = obs.view(batch_size, obs_len, -1).to(device)
         acts = acts.to(device)
         adv_acts = adv_acts.to(device)
-        ret_scaled = (ret / scale).to(device)
+        ret = ret.to(device)
         
         # Create mask for valid timesteps
         timestep_indices = torch.arange(obs_len, device=device).unsqueeze(0).expand(batch_size, -1)
@@ -258,12 +173,12 @@ def evaluate_models(qsa_pr_model, qsa_adv_model, v_model, dataloader, device, sc
             pred_pr_mean = (pred_pr.squeeze(-1) * valid_mask).sum() / valid_mask.sum()
             pred_adv_mean = (pred_adv.squeeze(-1) * valid_mask).sum() / valid_mask.sum()
             pred_v_mean = (pred_v.squeeze(-1) * valid_mask).sum() / valid_mask.sum()
-            true_mean = (ret_scaled * valid_mask).sum() / valid_mask.sum()
+            true_mean = (ret * valid_mask).sum() / valid_mask.sum()
         else:
             pred_pr_mean = pred_pr.mean()
             pred_adv_mean = pred_adv.mean() 
             pred_v_mean = pred_v.mean()
-            true_mean = ret_scaled.mean()
+            true_mean = ret.mean()
 
     gap_pr_adv = pred_pr_mean.item() - pred_adv_mean.item()
     gap_pr_v = pred_pr_mean.item() - pred_v_mean.item()
@@ -281,19 +196,29 @@ def evaluate_models(qsa_pr_model, qsa_adv_model, v_model, dataloader, device, sc
 
 
 def maxmin(
-        trajs: list[Trajectory],
-        action_space: gym.spaces,
-        adv_action_space: gym.spaces,
-        train_args: dict,
-        device: str,
-        n_cpu: int,
-        is_simple_model: bool = False,
-        is_toy: bool = False,
-        is_discretize: bool = False,
-    ) -> tuple[np.ndarray, float]:
+    trajs: list[Trajectory],
+    action_space: gym.spaces,
+    adv_action_space: gym.spaces,
+    train_args: dict,
+    device: str,
+    n_cpu: int,
+    is_simple_model: bool = False,
+    is_toy: bool = False,
+    is_discretize: bool = False,
+) -> tuple[np.ndarray, float]:
     """
     Train a max-min adversarial RL model with value functions and IQL losses.
+    Updated to handle the new JSON dataset format and **without scaling**.
     """
+    print("=== IQL Minimax Training with JSON Dataset (No Scaling) ===")
+    
+    # Collect rewards for statistics
+    all_rewards = []
+    for traj in trajs:
+        episode_reward = np.sum(traj.rewards)
+        all_rewards.append(episode_reward)
+    print(f"Dataset size: {len(trajs)} episodes")
+    print(f"Reward stats: mean={np.mean(all_rewards):.3f}, std={np.std(all_rewards):.3f}")
     
     # Setup action spaces and sizes
     if isinstance(action_space, gym.spaces.Discrete):
@@ -333,7 +258,7 @@ def maxmin(
         qsa_adv_model = RtgLSTM(obs_size, action_size, adv_action_size, train_args, include_adv=True).to(device)
         v_model = ValueNet(obs_size, train_args, is_lstm=True).to(device)
 
-    # Optimizers
+    # Optimizers with weight decay
     qsa_pr_optimizer = torch.optim.AdamW(
         qsa_pr_model.parameters(), lr=train_args['model_lr'], weight_decay=train_args.get('model_wd', 1e-4)
     )
@@ -349,7 +274,6 @@ def maxmin(
     maxmin_epochs = train_args.get('maxmin_epochs', 20)
     total_epochs = mse_epochs + maxmin_epochs
     gamma = train_args['gamma']
-    scale = train_args.get('scale', 1.0)
     
     print(f'Training for {total_epochs} epochs (MSE: {mse_epochs}, MaxMin: {maxmin_epochs})')
     
@@ -359,11 +283,11 @@ def maxmin(
         total_epochs += 1
         print(f"Adjusted maxmin_epochs to {maxmin_epochs} for alternating updates")
     
-    print("=== IQL Minimax Training ===")
+    print("=== Training Configuration ===")
     print(f"MSE epochs: {mse_epochs}")
     print(f"Minimax epochs: {maxmin_epochs}")
     print(f"Using ALTERNATING updates during minimax phase")
-    print(f"Scale factor: {scale}")
+    print("No scaling applied.")
     print("Phase order: MSE -> MAX (protagonist) -> MIN (adversary)")
 
     # Training loop
@@ -407,13 +331,9 @@ def maxmin(
             timestep_indices = torch.arange(obs_len, device=device).unsqueeze(0).expand(batch_size, -1)
             acts_mask = timestep_indices >= seq_len.unsqueeze(1)
             
-            # Scale returns
-            ret_scaled = ret / scale
-            ret_scaled = torch.clamp(ret_scaled, -1e6, 1e6)
-            
             # Compute single-step rewards: r_t = R_t - γ * R_{t+1}
             if obs_len > 1:
-                rewards = ret_scaled[:, :-1] - gamma * ret_scaled[:, 1:]  # [batch_size, seq_len-1]
+                rewards = ret[:, :-1] - gamma * ret[:, 1:]  # [batch_size, seq_len-1]
                 rewards = rewards.unsqueeze(-1)  # [batch_size, seq_len-1, 1]
                 rewards = torch.clamp(rewards, -1e6, 1e6)
             else:
@@ -437,20 +357,12 @@ def maxmin(
             # Training phases
             if epoch < mse_epochs:
                 # Phase 1: MSE pre-training
-                ret_target = ret_scaled.unsqueeze(-1)  # [batch_size, obs_len, 1]
+                ret_target = ret.unsqueeze(-1)  # [batch_size, obs_len, 1]
                 
                 # MSE losses for Q-functions
                 valid_mask_expanded = (~acts_mask).unsqueeze(-1).float()
                 ret_pr_loss = ((ret_pr_pred - ret_target) ** 2 * valid_mask_expanded).sum() / valid_mask_expanded.sum()
                 ret_adv_loss = ((ret_adv_pred - ret_target) ** 2 * valid_mask_expanded).sum() / valid_mask_expanded.sum()
-                
-                # Debug: Check if we have valid data
-                if total_batches == 1 and epoch == 0:
-                    print(f"Debug - Valid mask sum: {(~acts_mask).sum().item()}")
-                    print(f"Debug - Q_pr range: [{ret_pr_pred.min().item():.3f}, {ret_pr_pred.max().item():.3f}]")
-                    print(f"Debug - Q_adv range: [{ret_adv_pred.min().item():.3f}, {ret_adv_pred.max().item():.3f}]")
-                    print(f"Debug - V range: [{v_pred.min().item():.3f}, {v_pred.max().item():.3f}]")
-                    print(f"Debug - Target range: [{ret_target.min().item():.3f}, {ret_target.max().item():.3f}]")
                 
                 # IQL Value losses using proper expectile formulation
                 # L_V(ψ) for protagonist (τ=0.7, conservative)
@@ -459,18 +371,6 @@ def maxmin(
                 # L_V(ψ) for adversary (τ=0.3, optimistic for minimization)  
                 v_loss_adv = _iql_loss_v(ret_adv_pred, v_pred, acts_mask, tau=0.3)
                 
-                # Debug V losses
-                if total_batches == 1 and epoch == 0:
-                    print(f"Debug - V_loss_pr: {v_loss_pr.item():.6f}")
-                    print(f"Debug - V_loss_adv: {v_loss_adv.item():.6f}")
-                    
-                    # Check Q-V differences
-                    diff_pr = (ret_pr_pred.squeeze(-1) - v_pred.squeeze(-1))[~acts_mask]
-                    diff_adv = (ret_adv_pred.squeeze(-1) - v_pred.squeeze(-1))[~acts_mask]
-                    if len(diff_pr) > 0:
-                        print(f"Debug - Q_pr - V diff: mean={diff_pr.mean().item():.3f}, std={diff_pr.std().item():.3f}")
-                        print(f"Debug - Q_adv - V diff: mean={diff_adv.mean().item():.3f}, std={diff_adv.std().item():.3f}")
-                
                 # Weighted combination as per the proposal
                 v_loss = 0.7 * v_loss_pr + 0.3 * v_loss_adv
                 
@@ -478,7 +378,7 @@ def maxmin(
                 iql_loss_pr = _iql_loss_q(ret_pr_pred, rewards, v_pred, acts_mask, gamma)
                 iql_loss_adv = _iql_loss_q(ret_adv_pred, rewards, v_pred, acts_mask, gamma)
                 
-                # Q-only losses with max operator as per paper
+                # Q-only losses with max/min operators
                 q_only_loss_pr = _q_only_loss_max(ret_pr_pred, rewards, acts_mask, gamma)
                 q_only_loss_adv = _q_only_loss_min(ret_adv_pred, rewards, acts_mask, gamma)
                 
@@ -598,24 +498,20 @@ def maxmin(
                 
                 # Leaf loss: terminal state consistency
                 if (~acts_mask).sum() > 0:
-                    valid_indices = torch.where(~acts_mask)
-                    if len(valid_indices[0]) > 0:
-                        # Use last valid timestep for each sequence
-                        last_valid_timesteps = []
-                        for b in range(batch_size):
-                            valid_t = torch.where(~acts_mask[b])[0]
-                            if len(valid_t) > 0:
-                                last_valid_timesteps.append((b, valid_t[-1].item()))
+                    # Use last valid timestep for each sequence
+                    last_valid_timesteps = []
+                    for b in range(batch_size):
+                        valid_t = torch.where(~acts_mask[b])[0]
+                        if len(valid_t) > 0:
+                            last_valid_timesteps.append((b, valid_t[-1].item()))
+                    
+                    if last_valid_timesteps:
+                        batch_indices, time_indices = zip(*last_valid_timesteps)
+                        batch_indices = torch.tensor(batch_indices, device=device)
+                        time_indices = torch.tensor(time_indices, device=device)
                         
-                        if last_valid_timesteps:
-                            batch_indices, time_indices = zip(*last_valid_timesteps)
-                            batch_indices = torch.tensor(batch_indices, device=device)
-                            time_indices = torch.tensor(time_indices, device=device)
-                            
-                            ret_leaf_loss = ((ret_adv_pred[batch_indices, time_indices, 0] - 
-                                            ret_scaled[batch_indices, time_indices]) ** 2).mean()
-                        else:
-                            ret_leaf_loss = torch.tensor(0.0, device=device)
+                        ret_leaf_loss = ((ret_adv_pred[batch_indices, time_indices, 0] - 
+                                        ret[batch_indices, time_indices]) ** 2).mean()
                     else:
                         ret_leaf_loss = torch.tensor(0.0, device=device)
                 else:
@@ -630,7 +526,7 @@ def maxmin(
                 q_only_loss_adv = _q_only_loss_min(ret_adv_pred, rewards, acts_mask, gamma)
                 
                 # IQL loss for adversary
-                iql_loss_adv = _iql_loss_q_adv(ret_adv_pred, rewards, v_pred, acts_mask, gamma)
+                iql_loss_adv = _iql_loss_q(ret_adv_pred, rewards, v_pred, acts_mask, gamma)
                 
                 total_loss_epoch = (
                     ret_adv_loss + 
@@ -675,34 +571,33 @@ def maxmin(
         else:
             print(f"Minimax Epoch {epoch - mse_epochs} (MIN step):")
             
-        evaluate_models(qsa_pr_model, qsa_adv_model, v_model, dataloader, device, scale)
+        evaluate_models(qsa_pr_model, qsa_adv_model, v_model, dataloader, device)
 
-    # Evaluation phase - get learned returns using ValueNet
-    print("\nEvaluating learned returns...")
-    v_model.eval()
-    
+    # ---- Relabeling Phase ----
+    print("\n=== Trajectory Relabeling ===")
+    qsa_pr_model.eval()
     with torch.no_grad():
+        relabeled_trajs = []
         learned_returns = []
         prompt_value = -np.inf
-
-        for traj in tqdm(trajs, desc="Computing returns"):
+        
+        for traj in tqdm(trajs, desc="Relabeling trajectories"):
             obs = torch.from_numpy(np.array(traj.obs)).float().to(device).view(1, -1, obs_size)
             acts = torch.from_numpy(np.array(traj.actions)).to(device)
-            
             if action_type == "discrete" and not is_discretize:
                 acts = acts.float().view(1, -1, action_size)
             else:
                 acts = acts.view(1, -1, action_size)
-            
-            # Use ValueNet for returns
-            returns = v_model(obs).cpu().flatten().numpy()
-            
-            # Scale back to original scale and update prompt value
-            returns_scaled = returns * scale
-            if len(returns_scaled) > 0 and prompt_value < returns_scaled[0]:
-                prompt_value = returns_scaled[0]
                 
-            learned_returns.append(np.round(returns_scaled, decimals=3))
+            returns = qsa_pr_model(obs, acts).cpu().flatten().numpy()
+            if len(returns) > 0 and prompt_value < returns[0]:
+                prompt_value = returns[0]
+            learned_returns.append(np.round(returns, decimals=3))
+            
+            relabeled_traj = deepcopy(traj)
+            relabeled_traj.minimax_returns_to_go = returns.tolist()
+            relabeled_trajs.append(relabeled_traj)
 
-    print(f"Evaluation complete. Prompt value: {prompt_value:.3f}")
-    return learned_returns, np.round(prompt_value, decimals=3)
+    print(f"Relabeled {len(relabeled_trajs)} trajectories with minimax returns-to-go")
+    print(f"Training complete. Prompt value: {prompt_value:.3f}")
+    return relabeled_trajs, np.round(prompt_value, decimals=3)

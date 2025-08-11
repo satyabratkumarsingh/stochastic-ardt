@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from return_transforms.models.basic.mlp import MLP
+from core_models.base_models.base_model import MLP
 
 class ValueNet(nn.Module):
     def __init__(self, state_dim: int, model_args: dict = None, hidden_dim: int = 64, is_lstm: bool = False):

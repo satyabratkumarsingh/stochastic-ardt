@@ -7,9 +7,10 @@ import numpy as np
 import torch
 import pickle
 from offline_setup.toy_env import ToyOfflineEnv
-from evaluation.evaluation_pipeline import IntegratedARDTPipeline
 from training.generate_max_min import generate_maxmin
 from training.post_max_min_training import train_dt_baseline
+from evaluation.model_evaluator import ModelEvaluator
+
 MUJOCO_TARGETS_DICT = {'halfcheetah': [2000, 3000], 'hopper': [500, 1000], 'walker2d': [800, 1000]}
 
 
@@ -41,7 +42,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     # General arguments
-    parser.add_argument('--run_implicit', type=str2bool, default=False)
+    parser.add_argument('--method', type=str, default=False)
     parser.add_argument('--game_name', type=str, required=False)
     parser.add_argument('--offline_file', type=str, required=False)
     parser.add_argument('--seed', type=int, default=0)
@@ -131,7 +132,8 @@ if __name__ == '__main__':
         ret_file = variant['ret_file']
 
         generate_maxmin(
-            variant['game_name'], 
+            variant['game_name'],
+            variant['method'],
             variant['seed'],
             env, 
             trajs, 
@@ -139,55 +141,25 @@ if __name__ == '__main__':
             variant['device'], 
             variant['n_cpu'], 
             is_simple_model=variant['is_simple_maxmin_model'],
-            is_toy=(variant['env_name'] == 'toy'),
-            is_implicit=variant['run_implicit']
+            is_toy=(variant['env_name'] == 'toy')
         )
-        train_dt_baseline(seed=variant['seed'], 
+        dt_model = train_dt_baseline(seed=variant['seed'], 
                         game_name= variant['game_name'],
+                        method= variant['method'],
                         dt_train_args= variant['config'],
                         n_cpu= variant['n_cpu'],
-                        device=variant['device'],
-                        is_implicit= variant['run_implicit'])
-            # --- Step 3: Train Decision Transformer ---
-        # trained_dt_model = train_decision_transformer(
-        #     env=env,
-        #     ret_file = ret_file
-        #     config_path=variant['config'],
-        #     device=variant['device'],
-        #     n_cpu=variant['n_cpu'],
-        #     run_implicit=variant['run_implicit']
-        # )
-        #     #--- Step 4: Evaluate Decision Transformer ---
-        # final_eval_results = evaluate_decision_transformer(
-        #     dt_model=trained_dt_model,
-        #     env=env,
-        #     relabeled_trajs=loaded_relabeled_trajs,
-        #     prompt_value=loaded_prompt_value,
-        #     config_path=variant['config'],
-        #     device=variant['device'],
-        #     algo_name='ardt_dt',
-        #     returns_filename='kuhn_poker_eval_run',
-        #     dataset_name='kuhn_poker_relabel_data',
-        #     test_adv_name='worst_case_kuhn',
-        #     added_dataset_name='extra_data_dt',
-        #     added_dataset_prop=0.1
-        # )
-
-        # pipeline = IntegratedARDTPipeline(
-        # ret_file  = ret_file,
-        # run_implicit =False, 
-        # config_path=variant['config'],
-        # device='cuda' if torch.cuda.is_available() else 'cpu',
-        # n_cpu=4,
-        # seed=variant['seed'])
-   
+                        device=variant['device']
+                       )
         
-        # results = pipeline.run_full_pipeline(
-        #     ret_file=ret_file,
-        #     env_name='kuhn_poker',
-        #     task=env,
-        #     num_eval_episodes = 1,
-        #     run_implicit=False
-        # )
-
-        print(f"\nOverall pipeline finished. Final Evaluation Results: {results}")
+       
+        evaluator = ModelEvaluator(
+        seed=variant['seed'], 
+        game_name=variant['game_name'],
+        config_path=variant['config'],
+        device='cpu',
+        dt_model = dt_model
+        )
+    
+        # Run the full evaluation
+        results = evaluator.evaluate_models(env_instance=env, method= variant['method'], num_episodes=10000)
+        print(results)

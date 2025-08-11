@@ -27,11 +27,11 @@ class DecisionTransformerTrainer:
         self.device = device
     
 
-    def train(self, relabeled_trajs: List, is_implicit = False) -> torch.nn.Module:
+    def train(self, relabeled_trajs: List, method: str) -> torch.nn.Module:
         
         print(f"\n=== Training Decision Transformer ===")
         use_minimax_returns = True
-        dt_model_path = dt_model_name(seed=self.seed, game= self.game_name, is_implicit= is_implicit)    
+        dt_model_path = dt_model_name(seed=self.seed, game= self.game_name, method=method)    
         
         # Extract model parameters from first trajectory
         first_traj = relabeled_trajs[0]
@@ -58,18 +58,32 @@ class DecisionTransformerTrainer:
 
         # Initialize model
         dt_model = DecisionTransformer(
-            state_dim=obs_size,
-            act_dim=action_size,
-            hidden_size=self.dt_train_args.get('hidden_size', 64),
-            max_length=horizon,
-            max_ep_len=effective_max_ep_len,
-            action_tanh=(action_type == 'continuous'),
-            action_type=action_type,
-            n_layer=self.dt_train_args.get('transformer_n_layer', 2),
-            n_head=self.dt_train_args.get('transformer_n_head', 1),
-            n_inner=self.dt_train_args.get('transformer_n_inner', 256),
-            dropout=self.dt_train_args.get('transformer_dropout', 0.1)
-        ).to(self.device)
+                    state_dim=obs_size,
+                    act_dim=action_size,
+                    hidden_size=32,          # Match the checkpoint's hidden size
+                    max_length=horizon,
+                    max_ep_len=effective_max_ep_len,
+                    action_tanh=(action_type == 'continuous'),
+                    action_type=action_type,
+                    n_layer=2,               # Match the number of layers from the checkpoint
+                    n_head=1,                 # Match the number of heads
+                    n_inner=256,              # Match the inner size from the checkpoint
+                    dropout=0.1
+        )
+        
+        # dt_model = DecisionTransformer(
+        #     state_dim=obs_size,
+        #     act_dim=action_size,
+        #     hidden_size=32,
+        #     max_length=horizon,
+        #     max_ep_len=effective_max_ep_len,
+        #     action_tanh=(action_type == 'continuous'),
+        #     action_type=action_type,
+        #     n_layer=2,
+        #     n_head=self.dt_train_args.get('transformer_n_head', 1),
+        #     n_inner=2,
+        #     dropout=self.dt_train_args.get('transformer_dropout', 0.1)
+        # ).to(self.device)
 
         # Initialize optimizer
         dt_optimizer = torch.optim.AdamW(
@@ -97,7 +111,7 @@ class DecisionTransformerTrainer:
         dt_model.train()
         training_losses = []
         
-        num_epochs = self.dt_train_args.get('dt_epochs', 10)
+        num_epochs = self.dt_train_args.get('dt_epochs', 5)
         for epoch in range(num_epochs):
             total_dt_loss = 0
             batch_count = 0
@@ -105,8 +119,7 @@ class DecisionTransformerTrainer:
             pbar = tqdm(dt_dataloader, desc=f" Epoch {epoch+1}/{num_epochs}")
             for batch_idx, batch_data in enumerate(pbar):
                 obs, acts, adv_acts, minimax_ret, seq_len = [d.to(self.device) for d in batch_data]
-                minimax_ret = (minimax_ret / self.dt_train_args.get('scale', 1.0))
-
+                
                 dt_optimizer.zero_grad()
 
                 batch_size, horizon_len = obs.shape[0], obs.shape[1]

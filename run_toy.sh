@@ -22,8 +22,8 @@ python -Xfrozen_modules=off -m debugpy --listen 5678 --wait-for-client main.py \
     --K 4 \
     --train_iters 1 \
     --num_steps_per_iter 100 \
-    --run_implicit True \
-    --offline_file "kuhn_poker_cfr_expert_vs_random_results.json"
+    --run_implicit False \
+    --offline_file "merged_randomized_data_kuhn_poker.json"
 
 # #!/bin/bash
 # seed=3  # desired seed

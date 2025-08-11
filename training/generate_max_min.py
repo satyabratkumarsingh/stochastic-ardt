@@ -11,9 +11,14 @@ import json
 
 
 def _convert_ndarray_to_list(obj):
-    """Recursively convert numpy arrays to lists in nested structures."""
+    """Recursively convert numpy arrays and scalars to lists/native types in nested structures."""
     if isinstance(obj, np.ndarray):
         return obj.tolist()
+    # FIX: Add checks for NumPy scalar types
+    elif isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
     elif isinstance(obj, list):
         return [_convert_ndarray_to_list(i) for i in obj]
     elif isinstance(obj, dict):
@@ -22,7 +27,8 @@ def _convert_ndarray_to_list(obj):
         return obj
 
 def generate_maxmin(
-        game_name: str,
+        game_name: str,                               
+        method: str,
         seed: int,
         env: gym.Env,
         trajs: list[Trajectory],
@@ -30,8 +36,7 @@ def generate_maxmin(
         device: str,
         n_cpu: int,
         is_simple_model: bool = False,
-        is_toy: bool = False,
-        is_implicit: bool = False
+        is_toy: bool = False
     ):
 
     config = yaml.safe_load(Path(config).read_text())
@@ -39,13 +44,17 @@ def generate_maxmin(
     if config['normalize']:
         trajs = _normalize_obs(trajs)
 
-    if is_implicit:
+    if method == 'implicit_q':
         print("****** Running implicit Q learning =======")
         from core_models.implicit_q.maxmin_implicit import maxmin
-    else:
+    elif method == 'max_min':
         print("******* Running normal ARDT with MAX MIN =======")
         from core_models.maxmin.maxmin import maxmin
-
+    elif method == 'cql':
+        print("******* Running normal ARDT CQL  =======")
+        from core_models.cql.cql import maxmin
+    else:
+        raise ValueError(f"Unknown method: {method}")
 
     print('Generating ARDT returns (maxmin phase)...')
     relabeled_trajs, prompt_value = maxmin(
@@ -59,9 +68,9 @@ def generate_maxmin(
         is_toy=is_toy
     )
 
-    pkl_file_relabeled = pkl_name_min_max_relabeled(seed=seed, game= game_name, is_implicit=is_implicit)
-    json_file = json_name_min_max_relabeled(seed=seed, game= game_name, is_implicit=is_implicit)
-    prompt_file = prompt_min_max(seed=seed, game= game_name, is_implicit=is_implicit)
+    pkl_file_relabeled = pkl_name_min_max_relabeled(seed=seed, game= game_name, method=method)
+    json_file = json_name_min_max_relabeled(seed=seed, game= game_name, method=method)
+    prompt_file = prompt_min_max(seed=seed, game= game_name, method=method)
     print(f' ==============Done. Saving relabeled trajectories and prompts with prefix {pkl_file_relabeled}.')
     Path(pkl_file_relabeled).parent.mkdir(parents=True, exist_ok=True) 
 
@@ -79,6 +88,7 @@ def generate_maxmin(
 
 
     # --- JSON version for prompt_value ---
+    # The fix ensures this conversion handles NumPy scalar types correctly
     prompt_value_clean = _convert_ndarray_to_list(prompt_value)
     with open(prompt_file, "w") as f: # Use final prefix for JSON prompt
         json.dump(prompt_value_clean, f)

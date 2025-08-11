@@ -1,511 +1,550 @@
-
+import os
+import json
+import yaml
 import numpy as np
 import torch
-from typing import Dict, List, Tuple
-import pickle
-import os
+import torch.nn.functional as F
+from torch.distributions import Categorical
+from tqdm import tqdm
 from pathlib import Path
-from return_transforms.eval_function import EvalFnGenerator
+from typing import Tuple, List, Optional, Callable, Dict, Any
+import gym
+from core_models.decision_transformer.decision_transformer import DecisionTransformer
+from core_models.behaviour_cloning.behaviour_cloning import MLPBCModel
+from utils.saved_names import dt_model_name, behaviour_cloning_model_name
+import matplotlib.pyplot as plt
 
-class ARDTValidationSuite:
-    """
-    Integration with your existing evaluation framework to add ARDT-specific validation
-    """
+
+class ARDTEvaluator:
     
-    def __init__(self, eval_fn_generator):
-        self.eval_fn_generator = eval_fn_generator
-        self.validation_results = {}
-    
-    def validate_minimax_returns_prediction(self, minimax_model, test_trajectories: List[Dict]) -> Dict:
-        """
-        Validate that the minimax returns prediction model is working correctly
-        """
-        print("🔍 Validating Minimax Returns Prediction...")
+    def __init__(
+        self,
+        env_name: str,
+        env_instance,
+        state_dim: int,
+        act_dim: int,
+        action_type: str,
+        max_ep_len: int,
+        scale: float,
+        state_mean: np.ndarray,
+        state_std: np.ndarray,
+        adv_act_dim: Optional[int] = None,
+        normalize_states: bool = True,
+        device: str = 'cpu'
+    ):
+        self.env_name = env_name
+        self.env_instance = env_instance
+        self.state_dim = state_dim
+        self.act_dim = act_dim
+        self.action_type = action_type
+        self.max_ep_len = max_ep_len
+        self.scale = scale
+        self.adv_act_dim = adv_act_dim or act_dim
+        self.normalize_states = normalize_states
+        self.device = device
         
-        prediction_errors = []
-        trajectory_errors = []
+        self.state_mean = torch.from_numpy(state_mean).float().to(device)
+        self.state_std = torch.from_numpy(state_std).float().to(device)
+
+    def _decode_kuhn_state(self, state: np.ndarray) -> str:
+        if self.env_name != "kuhn_poker":
+            return "N/A"
         
-        for traj in test_trajectories:
-            # Extract trajectory data
-            states = np.array(traj['obs'])
-            actions = np.array(traj['actions'])
-            rewards = np.array(traj['rewards'])
-            true_minimax_rtg = np.array(traj['minimax_returns_to_go'])
+        if len(state) >= 12:
+            active_pos = np.where(state == 1.0)[0]
+            if len(active_pos) > 0:
+                pos = active_pos[0]
+                if pos < 3:
+                    return f"P0_card_{pos}"
+                elif pos < 6:
+                    return f"P1_card_{pos-3}"
+                elif pos < 9:
+                    return f"History_{pos-6}"
+                else:
+                    return f"Other_{pos}"
+        return "Unknown_state"
+
+    def _get_env(self):
+        if hasattr(self.env_instance, 'reset'):
+            return self.env_instance
+        try:
+            return self.env_instance()
+        except TypeError:
+            return self.env_instance
+
+    def _worst_case_env_step(self, action: Any, env) -> Tuple:
+        action = int(np.argmax(action) if isinstance(action, (np.ndarray, torch.Tensor)) and action.size > 1 else action)
+        if self.env_name == "kuhn_poker" and env.player_turn == 0:
+            new_state, reward, terminated, truncated, info = env.step(action)
+            if not (terminated or truncated) and env.player_turn == 1:
+                adv_action = np.random.choice([0, 1])
+                new_state, reward_adv, terminated_adv, truncated_adv, info_adv = env.step(adv_action)
+                reward += reward_adv
+                terminated = terminated_adv
+                truncated = truncated_adv
+                info.update(info_adv)
+                info["adv_action"] = adv_action
+            return new_state, reward, terminated, truncated, info
+        else:
+            return env.step(action)
+
             
-            # Predict minimax returns using your model
+    def _normal_case_env_step(self, action: Any, env) -> Tuple:
+        """Standard environment step."""
+        action = int(np.argmax(action) if isinstance(action, (np.ndarray, torch.Tensor)) and action.size > 1 else action)
+        step_result = env.step(action)
+        if len(step_result) == 4:
+            next_state, reward, done, info = step_result
+            return next_state, reward, done, done, info
+        else:
+            return step_result
+
+    # 
+    def evaluate_single_episode(
+    self,
+    model: torch.nn.Module,
+    target_return: float,
+    step_fn: Callable,
+    debug: bool = False
+    ) -> tuple[float, list[int]]:
+        debug = True
+        env = self._get_env()
+        env_state = env.reset()
+        if isinstance(env_state, tuple):
+            state, _ = env_state
+        else:
+            state = env_state
+
+        episode_return = 0.0
+        episode_actions = []
+
+        # Buffers for states, actions, returns-to-go
+        states = torch.zeros(1, self.max_ep_len, self.state_dim, device=self.device)
+        actions = torch.zeros(1, self.max_ep_len, self.act_dim, device=self.device)
+        returns_to_go = torch.zeros(1, self.max_ep_len, 1, device=self.device)
+
+        # Initialize first return-to-go with scaled target_return
+        returns_to_go[:, 0, 0] = target_return * self.scale
+
+        if debug:
+            print(f"\n🎯 Episode Start: target={target_return:.3f}")
+
+        model.eval()
+
+        for step in range(self.max_ep_len):
+            if debug:
+                print(f"\n--- Step {step} ---")
+
+            # Current state -> store in buffer
+            states[:, step, :] = torch.from_numpy(state.astype(np.float32)).to(self.device)
+
+            # Calculate returns-to-go for current step: target_return - cum_return so far
+            if step > 0:
+                returns_to_go[:, step, 0] = (target_return - episode_return) * self.scale
+
+            # Prepare shifted actions input: shift right by 1 timestep, first is zeros
+            if step == 0:
+                shifted_actions = torch.zeros_like(actions[:, :step+1, :])
+            else:
+                shifted_actions = torch.zeros(1, step+1, self.act_dim, device=self.device)
+                shifted_actions[:, 1:, :] = actions[:, :step, :]
+
+            # Build attention mask (all ones for current length)
+            attention_mask = torch.ones(1, step+1, dtype=torch.bool, device=self.device)
+
             with torch.no_grad():
-                states_tensor = torch.FloatTensor(states)
-                actions_tensor = torch.FloatTensor(actions)
-                
-                # This would depend on your minimax model interface
-                predicted_minimax_rtg = minimax_model.predict(states_tensor, actions_tensor)
-                predicted_minimax_rtg = predicted_minimax_rtg.cpu().numpy()
+                try:
+                    _, action_preds, _ = model(
+                        states=states[:, :step+1, :],
+                        actions=shifted_actions,
+                        returns_to_go=returns_to_go[:, :step+1, :],
+                        timesteps=torch.tensor([[step]], device=self.device, dtype=torch.long),
+                        attention_mask=attention_mask
+                    )
+
+                    action_logits = action_preds[0, -1, :]  # last token's prediction
+                    action_probs = F.softmax(action_logits, dim=0)
+                    action_idx = Categorical(action_probs).sample().item()
+
+                except Exception as e:
+                    print(f"🚨 Model forward pass failed: {e}")
+                    action_idx = np.random.choice(self.act_dim)
+
+            # Convert discrete action index to one-hot
+            action_onehot = torch.zeros(self.act_dim, device=self.device)
+            action_onehot[action_idx] = 1.0
+
+            # Store action in buffer
+            actions[:, step, :] = action_onehot
+
+            episode_actions.append(action_idx)
+
+            # Step env
+            next_state, reward, terminated, truncated, _ = step_fn(action_idx, env)
+            done = terminated or truncated
+            episode_return += reward
+
+            if done:
+                if debug:
+                    print(f"Episode finished: length={step+1}, return={episode_return:.3f}")
+                break
+
+            state = next_state
+
+        return episode_return, episode_actions
+
+
+    def create_eval_function(self, model_type: str, worst_case: bool = False, debug: bool = False) -> Callable:
+        """
+        Creates a single, unified evaluation function for a given model type and case.
+        """
+        step_fn = self._worst_case_env_step if worst_case else self._normal_case_env_step
+
+        def eval_fn(model: torch.nn.Module, target_return: float, num_episodes: int = 50):
+            model.eval()
+            episode_returns = []
+            episode_actions = []
             
-            # Calculate errors
-            traj_error = np.mean(np.abs(predicted_minimax_rtg - true_minimax_rtg))
-            trajectory_errors.append(traj_error)
-            prediction_errors.extend(np.abs(predicted_minimax_rtg - true_minimax_rtg))
+            with torch.no_grad():
+                for ep in tqdm(range(num_episodes), desc=f"Evaluating R={target_return} ({'Worst' if worst_case else 'Normal'})"):
+                    episode_debug = debug and ep < 3
+                    
+                    episode_return, actions = self.evaluate_single_episode(
+                        model, target_return, step_fn, debug=episode_debug
+                    )
+                    episode_returns.append(episode_return)
+                    episode_actions.append(actions)
+            
+            return episode_returns, episode_actions
+        return eval_fn
+
+    def comprehensive_dual_evaluation(
+        self,
+        model: torch.nn.Module,
+        target_returns: List[float] = None,
+        num_episodes_per_target: int = 500,
+        save_path: str = "evaluation_results"
+    ) -> Dict:
+        """
+        Runs comprehensive evaluation on both normal and worst-case scenarios.
+        Saves and plots the results.
+        """
+        if target_returns is None:
+            target_returns = [-2.0, -1.0, 0.0, 1.0, 2.0]
         
-        results = {
-            'mean_absolute_error': np.mean(prediction_errors),
-            'std_error': np.std(prediction_errors),
-            'max_error': np.max(prediction_errors),
-            'trajectory_errors': trajectory_errors,
-            'prediction_quality': 'good' if np.mean(prediction_errors) < 0.1 else 'poor'
+        print("🚀 Starting Comprehensive Dual ARDT Evaluation...")
+        print("=" * 60)
+        
+        results = {'normal': {}, 'worst_case': {}}
+        
+        # --- Normal Case Evaluation ---
+        print("\n** Evaluating Normal Case **")
+        eval_fn_normal = self.create_eval_function(model_type='dt', worst_case=False)
+        for target in target_returns:
+            returns, _ = eval_fn_normal(model, target, num_episodes=num_episodes_per_target)
+            results['normal'][f'target_{target}'] = {
+                'mean': np.mean(returns),
+                'std': np.std(returns),
+                'returns': returns
+            }
+        
+        # --- Worst-Case Evaluation ---
+        print("\n** Evaluating Worst-Case **")
+        eval_fn_worst = self.create_eval_function(model_type='dt', worst_case=True)
+        for target in target_returns:
+            returns, _ = eval_fn_worst(model, target, num_episodes=num_episodes_per_target)
+            results['worst_case'][f'target_{target}'] = {
+                'mean': np.mean(returns),
+                'std': np.std(returns),
+                'returns': returns
+            }
+
+        # --- Save and Plot Results ---
+        self._save_results(results, save_path)
+        self._plot_results(results, target_returns, save_path)
+        
+        print("\n** Dual evaluation complete. Results saved and plotted. **")
+        
+        return results
+
+    def _save_results(self, results: Dict, save_path: str):
+        """Saves evaluation results to a JSON file."""
+        os.makedirs(save_path, exist_ok=True)
+        filename = Path(save_path) / 'dual_evaluation_results.json'
+        
+        # Convert numpy types to native Python types for JSON serialization
+        def convert_numpy(obj):
+            if isinstance(obj, np.ndarray):
+                return obj.tolist()
+            if isinstance(obj, (np.floating, np.integer)):
+                return obj.item()
+            if isinstance(obj, dict):
+                return {k: convert_numpy(v) for k, v in obj.items()}
+            return obj
+            
+        with open(filename, 'w') as f:
+            json.dump(convert_numpy(results), f, indent=2)
+        print(f"💾 Results saved to {filename}")
+
+    def _plot_results(self, results: Dict, target_returns: List[float], save_path: str):
+        """
+        Plots the results for both normal and worst-case scenarios with standard deviation.
+        """
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        target_returns = np.array(target_returns)
+
+        # Plot Normal Case
+        normal_means = np.array([results['normal'][f'target_{t}']['mean'] for t in target_returns])
+        normal_stds = np.array([results['normal'][f'target_{t}']['std'] for t in target_returns])
+        ax.plot(target_returns, normal_means, 'o-', color='green', label='Normal Case')
+        ax.fill_between(target_returns, normal_means - normal_stds, normal_means + normal_stds, color='green', alpha=0.2)
+
+        # Plot Worst-Case
+        worst_means = np.array([results['worst_case'][f'target_{t}']['mean'] for t in target_returns])
+        worst_stds = np.array([results['worst_case'][f'target_{t}']['std'] for t in target_returns])
+        ax.plot(target_returns, worst_means, 'x-', color='red', label='Worst-Case')
+        ax.fill_between(target_returns, worst_means - worst_stds, worst_means + worst_stds, color='red', alpha=0.2)
+        
+        # Plot ideal line
+        ax.plot(target_returns, target_returns, '--', color='gray', label='Ideal')
+        
+        # Add labels, title, and legend
+        ax.set_xlabel("Target Return")
+        ax.set_ylabel("Achieved Mean Return")
+        ax.set_title("ARDT Performance: Normal vs. Worst-Case")
+        ax.legend()
+        ax.grid(True)
+        
+        # Save and show the plot
+        plot_filename = Path(save_path) / 'dual_evaluation_plot.png'
+        plt.savefig(plot_filename)
+        print(f"🖼️ Plot saved to {plot_filename}")
+        plt.show()
+
+class ARDTValidator:
+    """
+    A suite of validation tests for ARDT models.
+    This class analyzes the performance results generated by an evaluator.
+    """
+    
+    def __init__(self, device: str = 'cpu'):
+        self.device = device
+        
+    def validate_return_conditioning(self, 
+                                   model: torch.nn.Module,
+                                   eval_fn: Callable,
+                                   target_returns: List[float] = None,
+                                   num_episodes: int = 50) -> Dict:
+        """Tests if the model can achieve a range of target returns."""
+        print("🎯 Testing Return Conditioning...")
+        
+        target_returns = target_returns or [-2.0, -1.0, 0.0, 1.0, 2.0]
+        results = {}
+        errors = []
+        success_rates = []
+        
+        for target in target_returns:
+            print(f"   Target: {target:.2f}")
+            returns, _ = eval_fn(model, target, num_episodes)
+            achieved = np.mean(returns)
+            error = abs(achieved - target)
+            success_rate = np.mean([abs(r - target) < 0.3 for r in returns])
+            
+            results[f'target_{target}'] = {
+                'achieved': float(achieved),
+                'error': float(error),
+                'success_rate': float(success_rate),
+                'std': float(np.std(returns))
+            }
+            
+            errors.append(error)
+            success_rates.append(success_rate)
+            print(f"     → Achieved: {achieved:.3f}, Error: {error:.3f}, Success: {success_rate:.3f}")
+        
+        avg_error = np.mean(errors)
+        avg_success = np.mean(success_rates)
+        passed = avg_success > 0.6 and avg_error < 0.5
+        
+        results['summary'] = {
+            'avg_error': float(avg_error),
+            'avg_success_rate': float(avg_success),
+            'passed': bool(passed),
+            'grade': 'PASS' if passed else 'FAIL'
         }
         
-        print(f"   MAE: {results['mean_absolute_error']:.4f}")
-        print(f"   Max Error: {results['max_error']:.4f}")
-        print(f"   Quality: {results['prediction_quality']}")
+        print(f"   📊 Avg Error: {avg_error:.3f}, Avg Success: {avg_success:.3f}")
+        print(f"   📊 Result: {results['summary']['grade']}")
         
         return results
     
-    def test_return_conditioning_accuracy(self, model, model_type: str) -> Dict:
-        """
-        Test if the model achieves different returns when conditioned on different targets
-        """
-        print("🎯 Testing Return Conditioning Accuracy...")
+    def validate_robustness(self,
+                           model: torch.nn.Module,
+                           eval_fn: Callable,
+                           target_return: float = 0.0,
+                           num_episodes: int = 100) -> Dict:
+        """Tests the model's robustness and consistency."""
+        print("🛡️ Testing Robustness...")
         
-        # Test with minimax returns from your dataset
-        test_targets = [-2.0, -1.0, 0.0, 1.0, 2.0]  # Range based on your Kuhn Poker rewards
-        conditioning_results = {}
+        returns, _ = eval_fn(model, target_return, num_episodes)
         
-        for target in test_targets:
-            print(f"   Testing target return: {target:.2f}")
-            
-            # Use your existing evaluation function
-            returns, lengths = self.eval_fn_generator.evaluate(
-                env_name=self.eval_fn_generator.env_name,
-                task=self.eval_fn_generator.task,
-                num_eval_episodes=50,  # Smaller number for testing
-                state_dim=self.eval_fn_generator.state_dim,
-                act_dim=self.eval_fn_generator.act_dim,
-                adv_act_dim=self.eval_fn_generator.adv_act_dim,
-                action_type=self.eval_fn_generator.action_type,
-                model=model,
-                model_type=model_type,
-                max_ep_len=self.eval_fn_generator.max_traj_len,
-                scale=self.eval_fn_generator.scale,
-                state_mean=self.eval_fn_generator.state_mean,
-                state_std=self.eval_fn_generator.state_std,
-                target_return=target,
-                batch_size=self.eval_fn_generator.batch_size,
-                normalize_states=self.eval_fn_generator.normalize_states,
-                device=self.eval_fn_generator.device
-            )
-            
-            mean_return = np.mean(returns)
-            target_error = abs(mean_return - target)
-            achievement_rate = np.mean([abs(r - target) < 0.2 for r in returns])
-            
-            conditioning_results[target] = {
-                'achieved_return': mean_return,
-                'target_error': target_error,
-                'achievement_rate': achievement_rate,
-                'return_std': np.std(returns),
-                'all_returns': returns
-            }
-            
-            print(f"     Achieved: {mean_return:.3f}, Error: {target_error:.3f}, Success Rate: {achievement_rate:.3f}")
+        mean_return = np.mean(returns)
+        worst_return = np.min(returns)
+        std_return = np.std(returns)
+        robustness_score = np.percentile(returns, 10)
         
-        return conditioning_results
-    
-    def test_worst_case_robustness(self, model, model_type: str, num_episodes: int = 200) -> Dict:
-        """
-        Test robustness against progressively stronger adversaries
-        """
-        print("🛡️ Testing Worst-Case Robustness...")
+        is_robust = robustness_score > target_return - 1.0
+        is_consistent = std_return < 1.0
+        passed = is_robust and is_consistent
         
-        robustness_results = {}
-        
-        # Test against different adversary strengths
-        # In your case, you have a deterministic worst-case adversary, 
-        # but we can test with different target returns to see robustness
-        
-        adversary_configs = {
-            'conservative_target': -0.5,  # Conservative play
-            'balanced_target': 0.0,       # Balanced play
-            'aggressive_target': 0.5      # Aggressive play
+        results = {
+            'mean_return': float(mean_return),
+            'worst_return': float(worst_return),
+            'std_return': float(std_return),
+            'robustness_score': float(robustness_score),
+            'is_robust': bool(is_robust),
+            'is_consistent': bool(is_consistent),
+            'passed': bool(passed),
+            'grade': 'PASS' if passed else 'FAIL'
         }
         
-        for config_name, target_return in adversary_configs.items():
-            print(f"   Testing against {config_name} (target: {target_return})...")
-            
-            returns, lengths = self.eval_fn_generator.evaluate(
-                env_name=self.eval_fn_generator.env_name,
-                task=self.eval_fn_generator.task,
-                num_eval_episodes=num_episodes,
-                state_dim=self.eval_fn_generator.state_dim,
-                act_dim=self.eval_fn_generator.act_dim,
-                adv_act_dim=self.eval_fn_generator.adv_act_dim,
-                action_type=self.eval_fn_generator.action_type,
-                model=model,
-                model_type=model_type,
-                max_ep_len=self.eval_fn_generator.max_traj_len,
-                scale=self.eval_fn_generator.scale,
-                state_mean=self.eval_fn_generator.state_mean,
-                state_std=self.eval_fn_generator.state_std,
-                target_return=target_return,
-                batch_size=self.eval_fn_generator.batch_size,
-                normalize_states=self.eval_fn_generator.normalize_states,
-                device=self.eval_fn_generator.device
-            )
-            
-            mean_return = np.mean(returns)
-            worst_case_return = np.min(returns)
-            robustness_score = np.percentile(returns, 10)  # 10th percentile as robustness metric
-            
-            robustness_results[config_name] = {
-                'mean_return': mean_return,
-                'worst_case_return': worst_case_return,
-                'robustness_score': robustness_score,
-                'return_std': np.std(returns),
-                'all_returns': returns
-            }
-            
-            print(f"     Mean: {mean_return:.3f}, Worst: {worst_case_return:.3f}, 10th percentile: {robustness_score:.3f}")
+        print(f"   Mean: {mean_return:.3f}, Worst: {worst_return:.3f}, Std: {std_return:.3f}")
+        print(f"   Robustness (10th %): {robustness_score:.3f}")
+        print(f"   Result: {results['grade']}")
         
-        # Calculate overall robustness metric
-        overall_robustness = np.mean([result['robustness_score'] for result in robustness_results.values()])
-        
-        robustness_results['overall_robustness'] = overall_robustness
-        print(f"   Overall Robustness Score: {overall_robustness:.3f}")
-        
-        return robustness_results
+        return results
     
-    def compare_with_baseline_dt(self, ardt_model, baseline_dt_model, num_episodes: int = 100) -> Dict:
-        """
-        Compare ARDT model with baseline Decision Transformer
-        """
-        print("📊 Comparing ARDT vs Baseline DT...")
+    def compare_models(self,
+                      ardt_model: torch.nn.Module,
+                      baseline_model: torch.nn.Module,
+                      eval_fn: Callable,
+                      target_returns: List[float] = None,
+                      num_episodes: int = 50) -> Dict:
+        """Compares the ARDT model's performance against a baseline model."""
+        print("📊 Comparing Models...")
         
-        comparison_results = {}
-        test_targets = [-1.0, 0.0, 1.0]  # Representative targets
+        target_returns = target_returns or [-1.0, 0.0, 1.0]
+        improvements = []
+        results = {}
         
-        for target in test_targets:
-            print(f"   Testing target return: {target:.2f}")
+        for target in target_returns:
+            print(f"   Target: {target:.2f}")
             
-            # Test ARDT
-            ardt_returns, _ = self.eval_fn_generator.evaluate(
-                env_name=self.eval_fn_generator.env_name,
-                task=self.eval_fn_generator.task,
-                num_eval_episodes=num_episodes,
-                state_dim=self.eval_fn_generator.state_dim,
-                act_dim=self.eval_fn_generator.act_dim,
-                adv_act_dim=self.eval_fn_generator.adv_act_dim,
-                action_type=self.eval_fn_generator.action_type,
-                model=ardt_model,
-                model_type='dt',
-                max_ep_len=self.eval_fn_generator.max_traj_len,
-                scale=self.eval_fn_generator.scale,
-                state_mean=self.eval_fn_generator.state_mean,
-                state_std=self.eval_fn_generator.state_std,
-                target_return=target,
-                batch_size=self.eval_fn_generator.batch_size,
-                normalize_states=self.eval_fn_generator.normalize_states,
-                device=self.eval_fn_generator.device
-            )
+            ardt_returns, _ = eval_fn(ardt_model, target, num_episodes)
+            baseline_returns, _ = eval_fn(baseline_model, target, num_episodes)
             
-            # Test Baseline DT
-            dt_returns, _ = self.eval_fn_generator.evaluate(
-                env_name=self.eval_fn_generator.env_name,
-                task=self.eval_fn_generator.task,
-                num_eval_episodes=num_episodes,
-                state_dim=self.eval_fn_generator.state_dim,
-                act_dim=self.eval_fn_generator.act_dim,
-                adv_act_dim=self.eval_fn_generator.adv_act_dim,
-                action_type=self.eval_fn_generator.action_type,
-                model=baseline_dt_model,
-                model_type='dt',
-                max_ep_len=self.eval_fn_generator.max_traj_len,
-                scale=self.eval_fn_generator.scale,
-                state_mean=self.eval_fn_generator.state_mean,
-                state_std=self.eval_fn_generator.state_std,
-                target_return=target,
-                batch_size=self.eval_fn_generator.batch_size,
-                normalize_states=self.eval_fn_generator.normalize_states,
-                device=self.eval_fn_generator.device
-            )
-            
-            # Calculate comparison metrics
             ardt_mean = np.mean(ardt_returns)
-            dt_mean = np.mean(dt_returns)
-            ardt_worst = np.min(ardt_returns)
-            dt_worst = np.min(dt_returns)
+            baseline_mean = np.mean(baseline_returns)
+            improvement = ardt_mean - baseline_mean
             
-            comparison_results[target] = {
-                'ardt_mean': ardt_mean,
-                'dt_mean': dt_mean,
-                'ardt_worst': ardt_worst,
-                'dt_worst': dt_worst,
-                'mean_improvement': ardt_mean - dt_mean,
-                'worst_case_improvement': ardt_worst - dt_worst,
-                'ardt_returns': ardt_returns,
-                'dt_returns': dt_returns
+            results[f'target_{target}'] = {
+                'ardt_mean': float(ardt_mean),
+                'baseline_mean': float(baseline_mean),
+                'improvement': float(improvement)
             }
             
-            print(f"     ARDT Mean: {ardt_mean:.3f}, DT Mean: {dt_mean:.3f}")
-            print(f"     ARDT Worst: {ardt_worst:.3f}, DT Worst: {dt_worst:.3f}")
-            print(f"     Improvement (Mean): {ardt_mean - dt_mean:.3f}")
-            print(f"     Improvement (Worst): {ardt_worst - dt_worst:.3f}")
+            improvements.append(improvement)
+            print(f"     ARDT: {ardt_mean:.3f}, Baseline: {baseline_mean:.3f}")
+            print(f"     Improvement: {improvement:.3f}")
         
-        # Calculate overall improvement
-        overall_mean_improvement = np.mean([result['mean_improvement'] for result in comparison_results.values()])
-        overall_worst_improvement = np.mean([result['worst_case_improvement'] for result in comparison_results.values()])
+        avg_improvement = np.mean(improvements)
+        passed = avg_improvement > 0.05
         
-        comparison_results['overall_metrics'] = {
-            'mean_improvement': overall_mean_improvement,
-            'worst_case_improvement': overall_worst_improvement,
-            'better_mean_performance': overall_mean_improvement > 0,
-            'better_worst_case': overall_worst_improvement > 0
+        results['summary'] = {
+            'avg_improvement': float(avg_improvement),
+            'passed': bool(passed),
+            'grade': 'PASS' if passed else 'FAIL'
         }
         
-        print(f"   Overall Mean Improvement: {overall_mean_improvement:.3f}")
-        print(f"   Overall Worst-Case Improvement: {overall_worst_improvement:.3f}")
+        print(f"   📈 Avg Improvement: {avg_improvement:.3f}")
+        print(f"   📈 Result: {results['summary']['grade']}")
         
-        return comparison_results
+        return results
     
-    def validate_trajectory_relabeling(self, original_trajectories: List[Dict], 
-                                     relabeled_trajectories: List[Dict]) -> Dict:
+    def run_validation(
+        self,
+        ardt_model: torch.nn.Module,
+        dt_eval_fn: Callable,
+        baseline_model: Optional[torch.nn.Module],
+        bc_eval_fn: Optional[Callable],
+        target_returns: List[float],
+        num_episodes: int
+    ) -> Dict:
         """
-        Validate that trajectory relabeling with minimax returns is consistent
+        Runs the validation for both ARDT and baseline models.
         """
-        print("🔄 Validating Trajectory Relabeling...")
+        print(f"🚀 Running validation for {self.device} device...")
+         
+        results = {'dt': {}, 'bc': {}}
         
-        relabeling_results = {
-            'original_return_stats': {},
-            'relabeled_return_stats': {},
-            'consistency_metrics': {}
-        }
-        
-        # Extract original and relabeled returns-to-go
-        original_rtgs = []
-        relabeled_rtgs = []
-        
-        for orig_traj, relabeled_traj in zip(original_trajectories, relabeled_trajectories):
-            # Assuming original trajectories have 'returns_to_go' and relabeled have 'minimax_returns_to_go'
-            if 'returns_to_go' in orig_traj:
-                original_rtgs.extend(orig_traj['returns_to_go'])
-            if 'minimax_returns_to_go' in relabeled_traj:
-                relabeled_rtgs.extend(relabeled_traj['minimax_returns_to_go'])
-        
-        original_rtgs = np.array(original_rtgs)
-        relabeled_rtgs = np.array(relabeled_rtgs)
-        
-        # Calculate statistics
-        relabeling_results['original_return_stats'] = {
-            'mean': np.mean(original_rtgs),
-            'std': np.std(original_rtgs),
-            'min': np.min(original_rtgs),
-            'max': np.max(original_rtgs)
-        }
-        
-        relabeling_results['relabeled_return_stats'] = {
-            'mean': np.mean(relabeled_rtgs),
-            'std': np.std(relabeled_rtgs),
-            'min': np.min(relabeled_rtgs),
-            'max': np.max(relabeled_rtgs)
-        }
-        
-        # Consistency metrics
-        if len(original_rtgs) == len(relabeled_rtgs):
-            correlation = np.corrcoef(original_rtgs, relabeled_rtgs)[0, 1]
-            mean_difference = np.mean(relabeled_rtgs - original_rtgs)
-            
-            relabeling_results['consistency_metrics'] = {
-                'correlation': correlation,
-                'mean_difference': mean_difference,
-                'relabeling_conservative': mean_difference < 0,  # Minimax should generally be more conservative
+        for target_return in target_returns:
+            print(f"\n--- Evaluating ARDT Model with target_return: {target_return} ---")
+            dt_returns, dt_actions = dt_eval_fn(ardt_model, target_return, num_episodes)
+
+            results['dt'][f'target_return_{target_return}'] = {
+                'returns': np.mean(dt_returns),
+                'std': np.std(dt_returns)
             }
             
-            print(f"   Correlation: {correlation:.3f}")  
-            print(f"   Mean Difference: {mean_difference:.3f}")
-            print(f"   Conservative Relabeling: {mean_difference < 0}")
+            if baseline_model and bc_eval_fn:
+                print(f"\n--- Evaluating Baseline (BC) Model with target_return: {target_return} ---")
+                bc_returns, bc_actions = bc_eval_fn(baseline_model, target_return, num_episodes)
+                results['bc'][f'target_return_{target_return}'] = {
+                    'returns': np.mean(bc_returns),
+                    'std': np.std(bc_returns)
+                }
         
-        print(f"   Original RTG - Mean: {relabeling_results['original_return_stats']['mean']:.3f}")
-        print(f"   Relabeled RTG - Mean: {relabeling_results['relabeled_return_stats']['mean']:.3f}")
-        
-        return relabeling_results
+        return results
     
-    def run_ardt_validation_suite(self, ardt_model, baseline_dt_model=None, 
-                                 minimax_model=None, test_trajectories=None) -> Dict:
-        """
-        Run complete ARDT validation suite
-        """
-        print("🚀 Running Complete ARDT Validation Suite\n")
-        
-        all_results = {}
-        
-        # 1. Minimax Returns Prediction Validation
-        if minimax_model and test_trajectories:
-            all_results['minimax_prediction'] = self.validate_minimax_returns_prediction(
-                minimax_model, test_trajectories
-            )
-        
-        # 2. Return Conditioning Test
-        all_results['return_conditioning'] = self.test_return_conditioning_accuracy(
-            ardt_model, 'dt'
+    def _generate_summary(self, test_results: Dict) -> Dict:
+        """Generates a summary of all test results."""
+        passed_tests = sum(
+            1 for test_result in test_results.values()
+            if test_result.get('passed', False) or test_result.get('summary', {}).get('passed', False)
         )
+        total_tests = len(test_results)
+        success_rate = passed_tests / total_tests if total_tests > 0 else 0
         
-        # 3. Worst-Case Robustness Test
-        all_results['robustness'] = self.test_worst_case_robustness(
-            ardt_model, 'dt'
-        )
-        
-        # 4. Baseline Comparison
-        if baseline_dt_model:
-            all_results['baseline_comparison'] = self.compare_with_baseline_dt(
-                ardt_model, baseline_dt_model
-            )
-        
-        # 5. Generate validation report
-        self._generate_validation_report(all_results)
-        
-        # 6. Save results
-        self._save_validation_results(all_results)
-        
-        return all_results
-    
-    def _generate_validation_report(self, results: Dict):
-        """Generate comprehensive validation report"""
-        print("\n" + "="*80)
-        print("🎯 ARDT VALIDATION REPORT")
-        print("="*80)
-        
-        # Return Conditioning Results
-        if 'return_conditioning' in results:
-            print("\n📊 RETURN CONDITIONING VALIDATION:")
-            conditioning = results['return_conditioning']
-            avg_achievement = np.mean([r['achievement_rate'] for r in conditioning.values()])
-            avg_error = np.mean([r['target_error'] for r in conditioning.values()])
-            
-            print(f"   Average Achievement Rate: {avg_achievement:.3f}")
-            print(f"   Average Target Error: {avg_error:.3f}")
-            print(f"   Conditioning Quality: {'✅ GOOD' if avg_achievement > 0.7 else '❌ POOR'}")
-        
-        # Robustness Results  
-        if 'robustness' in results:
-            print("\n🛡️ ROBUSTNESS VALIDATION:")
-            robustness = results['robustness']
-            overall_robustness = robustness.get('overall_robustness', 0)
-            
-            print(f"   Overall Robustness Score: {overall_robustness:.3f}")
-            print(f"   Robustness Quality: {'✅ GOOD' if overall_robustness > -0.5 else '❌ POOR'}")
-        
-        # Baseline Comparison Results
-        if 'baseline_comparison' in results:
-            print("\n📈 BASELINE COMPARISON:")
-            comparison = results['baseline_comparison']
-            overall_metrics = comparison.get('overall_metrics', {})
-            
-            mean_improvement = overall_metrics.get('mean_improvement', 0)
-            worst_improvement = overall_metrics.get('worst_case_improvement', 0)
-            
-            print(f"   Mean Performance Improvement: {mean_improvement:.3f}")
-            print(f"   Worst-Case Improvement: {worst_improvement:.3f}")
-            print(f"   Better than Baseline: {'✅ YES' if mean_improvement > 0 else '❌ NO'}")
-            print(f"   More Robust: {'✅ YES' if worst_improvement > 0 else '❌ NO'}")
-        
-        # Overall Assessment
-        print("\n🏆 OVERALL ARDT VALIDATION:")
-        
-        passes = 0
-        total_tests = 0
-        
-        if 'return_conditioning' in results:
-            total_tests += 1
-            if np.mean([r['achievement_rate'] for r in results['return_conditioning'].values()]) > 0.7:
-                passes += 1
-                print("   Return Conditioning: ✅ PASS")
-            else:
-                print("   Return Conditioning: ❌ FAIL")
-        
-        if 'robustness' in results:
-            total_tests += 1
-            if results['robustness'].get('overall_robustness', -999) > -0.5:
-                passes += 1
-                print("   Robustness: ✅ PASS")
-            else:
-                print("   Robustness: ❌ FAIL")
-        
-        if 'baseline_comparison' in results:
-            total_tests += 1
-            overall_metrics = results['baseline_comparison'].get('overall_metrics', {})
-            if overall_metrics.get('worst_case_improvement', -999) > 0:
-                passes += 1
-                print("   Baseline Improvement: ✅ PASS")
-            else:
-                print("   Baseline Improvement: ❌ FAIL")
-        
-        print(f"\n   Validation Score: {passes}/{total_tests}")
-        
-        if passes >= total_tests * 0.8:
-            print("   🎉 ARDT MODEL VALIDATION SUCCESSFUL!")
-        elif passes >= total_tests * 0.6:
-            print("   ⚠️ ARDT model shows promise but needs improvement")
+        print(f"   ✅ Tests Passed: {passed_tests}/{total_tests}")
+        print(f"   📊 Success Rate: {success_rate:.1%}")
+
+        if success_rate >= 0.8:
+            grade, emoji = "EXCELLENT", "🎉"
+        elif success_rate >= 0.6:
+            grade, emoji = "GOOD", "✅"
+        elif success_rate >= 0.4:
+            grade, emoji = "FAIR", "⚠️"
         else:
-            print("   ❌ ARDT model validation failed - significant issues detected")
+            grade, emoji = "POOR", "❌"
+            
+        print(f"   {emoji} Grade: {grade}")
         
-        print("="*80)
-    
-    def _save_validation_results(self, results: Dict):
-        """Save validation results to file"""
-        results_dir = Path('validation_results')
+        return {
+            'passed_tests': passed_tests,
+            'total_tests': total_tests,
+            'success_rate': success_rate,
+            'grade': grade,
+            'overall_passed': success_rate >= 0.6
+        }
+
+    def _save_results(self, results: Dict):
+        """Saves the validation results to a JSON file."""
+        results_dir = Path('ardt_validation_results')
         results_dir.mkdir(exist_ok=True)
         
-        filename = results_dir / f'ardt_validation_{self.eval_fn_generator.seed}.pkl'
+        def convert_numpy(obj):
+            if isinstance(obj, np.ndarray):
+                return obj.tolist()
+            if isinstance(obj, (np.floating, np.integer, bool)):
+                return obj.item()
+            if isinstance(obj, dict):
+                return {k: convert_numpy(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [convert_numpy(item) for item in obj]
+            return obj
         
-        with open(filename, 'wb') as f:
-            pickle.dump(results, f)
+        filename = results_dir / 'validation_results.json'
+        with open(filename, 'w') as f:
+            json.dump(convert_numpy(results), f, indent=2)
         
-        print(f"\n💾 Validation results saved to: {filename}")
-
-
-
-class EnhancedEvalFnGenerator(EvalFnGenerator):
-    """
-    Enhanced version of your EvalFnGenerator with ARDT validation capabilities
-    """
-    
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.validation_suite = ARDTValidationSuite(self)
-    
-    def run_full_ardt_evaluation(self, ardt_model: torch.nn.Module, 
-                                baseline_dt_model: torch.nn.Module = None,
-                                minimax_model: torch.nn.Module = None,
-                                test_trajectories: List[Dict] = None) -> Dict:
-        """
-        Run both standard evaluation and ARDT-specific validation
-        """
-        print("🚀 Running Full ARDT Evaluation (Standard + Validation)\n")
-        
-        # 1. Run standard evaluation across target returns
-        standard_results = self.run_full_evaluation(ardt_model, 'dt')
-        
-        # 2. Run ARDT-specific validation
-        validation_results = self.validation_suite.run_ardt_validation_suite(
-            ardt_model=ardt_model,
-            baseline_dt_model=baseline_dt_model,
-            minimax_model=minimax_model,
-            test_trajectories=test_trajectories
-        )
-        
-        # 3. Combine results
-        combined_results = {
-            'standard_evaluation': standard_results,
-            'ardt_validation': validation_results
-        }
-        
-        # 4. Save combined results
-        combined_filename = self.storage_path_template.replace('MODEL_TYPE', 'dt') \
-                                                     .replace(f'_TARGET_RETURN_{self.seed}.pkl', 
-                                                            f'_full_ardt_evaluation_{self.seed}.pkl')
-        
-        os.makedirs(os.path.dirname(combined_filename), exist_ok=True)
-        with open(combined_filename, 'wb') as f:
-            pickle.dump(combined_results, f)
-        
-        print(f"\n💾 Full ARDT evaluation saved to: {combined_filename}")
-        
-        return combined_results
+        print(f"\n💾 Results saved to: {filename}")

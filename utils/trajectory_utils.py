@@ -27,11 +27,11 @@ def get_action_dim(action_data):
             return action_data.shape[-1]
     raise TypeError(f"Unsupported action data type: {type(action_data)}")
 
-def get_relabeled_trajectories(seed, game, is_implicit = False):
+def get_relabeled_trajectories(seed, game, method):
      
     try:
-        trajectories_file_path = Path(pkl_name_min_max_relabeled(seed, game, is_implicit))
-        prompt_file_path = Path(prompt_min_max(seed, game, is_implicit))
+        trajectories_file_path = Path(pkl_name_min_max_relabeled(seed, game, method))
+        prompt_file_path = Path(prompt_min_max(seed, game, method))
         # Load trajectories
         with open(trajectories_file_path, 'rb') as f:
             loaded_relabeled_trajs: list[Trajectory] = pickle.load(f)

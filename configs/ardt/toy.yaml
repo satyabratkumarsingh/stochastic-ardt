@@ -6,11 +6,12 @@ train_args:
   model_lr: 0.001
   model_wd: 0.0001
   batch_size: 128
-  warmup_epochs: 15
-  minimax_epochs: 36
-  dt_epochs: 10
+  warmup_epochs: 10
+  minimax_epochs: 20
+  dt_epochs: 5
   alpha: 0.001
   leaf_weight: 0.9
+  transformer_n_layer: 12
   ret_obs_act_model_args:
     hidden_size: 512
     num_layers: 2
