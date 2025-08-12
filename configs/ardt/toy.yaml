@@ -7,7 +7,7 @@ train_args:
   model_wd: 0.0001
   batch_size: 128
   warmup_epochs: 10
-  minimax_epochs: 20
+  minimax_epochs: 30
   dt_epochs: 5
   alpha: 0.001
   leaf_weight: 0.9

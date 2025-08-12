@@ -13,18 +13,18 @@ python -Xfrozen_modules=off -m debugpy --listen 5678 --wait-for-client main.py \
     --seed $seed \
     --data_name "toy" \
     --env_name "toy" \
-    --ret_file "offline_data/${algo}_kuhn_poker${seed}" \
+    --ret_file "offline_data/${algo}_leduc_poker${seed}" \
     --device $device \
     --algo $algo \
     --config "configs/${algo}/toy.yaml" \
-    --checkpoint_dir "checkpoints/${algo}_kuhn_poker_seed${seed}" \
+    --checkpoint_dir "checkpoints/${algo}_leduc_poker_seed${seed}" \
     --model_type "dt" \
     --K 4 \
     --train_iters 1 \
     --num_steps_per_iter 100 \
     --method "implicit_q" \
-    --game_name "kuhn_poker" \
-    --offline_file "kuhn_poker_data.json"
+    --game_name "leduc_poker" \
+    --offline_file "leduc_poker_data.json"
 
 
 
