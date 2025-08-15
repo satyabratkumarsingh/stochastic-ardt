@@ -36,40 +36,6 @@ def incentive_violation_loss_zero_sum(policy: torch.Tensor, q_values: torch.Tens
     return viol_1.mean() + viol_2.mean()
 
 
-def update_q_with_ce(q_model, obs, acts, adv_acts, obs_next, rewards, dones, gamma, tau):
-    """Update Q-function using correlated equilibrium for next state values."""
-    B, T, obs_dim = obs.shape
-    A1, A2 = acts.shape[-1], adv_acts.shape[-1]
-
-    # Generate all joint action combinations
-    all_a = torch.eye(A1, device=obs.device)
-    all_adv = torch.eye(A2, device=obs.device)
-    joint = torch.cartesian_prod(torch.arange(A1), torch.arange(A2))
-    a_joint = all_a[joint[:, 0]]
-    adv_joint = all_adv[joint[:, 1]]
-    N = A1 * A2
-
-    # Expand next states and actions for all joint actions
-    obs_next_exp = obs_next.unsqueeze(2).repeat(1, 1, N, 1)
-    a_exp = a_joint.view(1, 1, N, -1).expand(B, T, -1, -1)
-    adv_exp = adv_joint.view(1, 1, N, -1).expand(B, T, -1, -1)
-
-    # Compute Q-values for all joint actions in next state
-    with torch.no_grad():  # Don't need gradients for target computation
-        q_next = q_model(obs_next_exp.reshape(-1, 1, obs_dim),
-                         a_exp.reshape(-1, 1, A1),
-                         adv_exp.reshape(-1, 1, A2)).view(B, T, A1, A2)
-
-    # Compute correlated equilibrium policy
-    ce_policy = approx_ce_batch(q_next, tau)
-
-    # Bellman backup with CE policy and proper terminal state handling
-    next_value = (ce_policy * q_next).sum(dim=[2, 3])
-    q_target = rewards + gamma * (1 - dones.float()) * next_value
-
-    return q_target.detach(), ce_policy.detach(), q_next.detach()
-
-
 def correlated_q_learning(
     trajs: list[Trajectory],
     obs_size: int,
@@ -82,7 +48,7 @@ def correlated_q_learning(
 ) -> torch.nn.Module:
     """Train Q-function using correlated Q-learning with CE policies."""
 
-    print("=== Correlated Q-Learning Training (No Scaling) ===")
+    print("=== Correlated Q-Learning Training (Fixed to match Implicit Q) ===")
 
     # Initialize Q-model
     if is_simple_model:
@@ -90,9 +56,11 @@ def correlated_q_learning(
     else:
         q_model = RtgLSTM(obs_size, action_size, adv_action_size, train_args, include_adv=True).to(device)
 
+    # Use same learning rate pattern as Implicit Q
+    base_lr = train_args['model_lr'] * 0.2
     optimizer = torch.optim.AdamW(
         q_model.parameters(),
-        lr=train_args['model_lr'],
+        lr=base_lr,
         weight_decay=train_args.get('model_wd', 1e-4)
     )
 
@@ -103,12 +71,21 @@ def correlated_q_learning(
         dataset, batch_size=train_args['batch_size']
     )
 
-    # Training hyperparameters
+    # Get scaling factor from dataset like Implicit Q
+    obs, acts, adv_acts, ret, seq_len = next(iter(dataloader))
+    max_return = torch.max(torch.abs(ret)).item()
+    scale_factor = max_return if max_return > 0 else 1.0
+    print(f"Computed scaling factor from dataset: {scale_factor:.4f}")
+
+    # Training hyperparameters - match Implicit Q structure
     mse_epochs = train_args.get('mse_epochs', 5)
-    ce_epochs = train_args.get('maxmin_epochs', 15)  # Using maxmin_epochs for consistency
+    ce_epochs = train_args.get('maxmin_epochs', 10)  # Use same as Implicit Q
     total_epochs = mse_epochs + ce_epochs
     tau = train_args.get('ce_temperature', 1.0)
-    lambda_ce = train_args.get('lambda_ce', 1.0)
+    lambda_ce = train_args.get('lambda_ce', 0.3)  # Match IQL loss weight
+
+    # Add scheduler like Implicit Q
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_epochs)
 
     print(f"MSE warmup epochs: {mse_epochs}")
     print(f"CE-Q learning epochs: {ce_epochs}")
@@ -123,47 +100,111 @@ def correlated_q_learning(
         num_batches = 0
 
         phase = "MSE Warmup" if epoch < mse_epochs else "CE-Q Learning"
+        pbar = tqdm(dataloader, desc=f"Epoch {epoch} ({phase})")
 
-        for obs, acts, adv_acts, ret, seq_len in tqdm(dataloader, desc=f"Epoch {epoch} ({phase})"):
-            batch_size, T = obs.shape[:2]
-            obs = obs.view(batch_size, T, -1).to(device)
-
-            # Prepare next state observations
-            obs_next = obs.clone()
-            obs_next[:, :-1] = obs[:, 1:]
-            obs_next[:, -1] = obs[:, -1]  # Terminal state handling
-
+        for obs, acts, adv_acts, ret, seq_len in pbar:
+            num_batches += 1
+            
+            # Match Implicit Q data processing
+            seq_len = torch.clamp(seq_len, max=obs.shape[1])
+            batch_size, obs_len = obs.shape[:2]
+            obs = obs.view(batch_size, obs_len, -1).to(device)
             acts = acts.to(device)
             adv_acts = adv_acts.to(device)
             ret = ret.to(device)
 
-            # Compute rewards and done flags from returns-to-go
-            rewards = ret[:, :-1] - ret[:, 1:]
-            rewards = F.pad(rewards, (0, 1), value=0.0)
+            # Create masks like Implicit Q
+            timestep_mask = torch.arange(obs_len, device=device)[None, :] < seq_len[:, None]
+            transition_mask = timestep_mask[:, :-1] & timestep_mask[:, 1:] if obs_len > 1 else None
 
-            # Create proper done flags (terminal states)
-            dones = torch.zeros_like(rewards, dtype=torch.bool)
-            for i, length in enumerate(seq_len):
-                if length > 0 and length <= rewards.shape[1]:
-                    dones[i, length-1] = True  # Mark terminal state
+            # Compute rewards from returns-to-go like Implicit Q
+            if obs_len > 1:
+                immediate_rewards = ret[:, :-1] - train_args['gamma'] * ret[:, 1:]
+                immediate_rewards = torch.clamp(immediate_rewards, -1e6, 1e6)
+            else:
+                immediate_rewards = torch.zeros(batch_size, 0, device=device)
 
             if epoch < mse_epochs:
-                # MSE warmup phase: predict return-to-go directly
-                q_pred = q_model(obs, acts, adv_acts).view(batch_size, T)
-                mse_loss = F.mse_loss(q_pred, ret)
+                # MSE warmup phase: predict return-to-go directly like Implicit Q
+                q_pred = q_model(obs, acts, adv_acts)
+                
+                # Handle action selection like Implicit Q
+                if len(q_pred.shape) == 3:
+                    q_pred_flat = (q_pred * adv_acts).sum(dim=-1)
+                else:
+                    q_pred_flat = q_pred.view(batch_size, obs_len)
+                
+                # Clamp predictions like Implicit Q
+                q_pred_flat = torch.clamp(q_pred_flat, -1e6, 1e6)
+                
+                if timestep_mask.sum() > 0:
+                    mse_loss = (((q_pred_flat - ret) ** 2) * timestep_mask.float()).sum() / timestep_mask.sum()
+                else:
+                    mse_loss = torch.tensor(0.0, device=device, requires_grad=True)
+                
                 ce_loss = torch.tensor(0.0, device=device)
                 total_loss = mse_loss
             else:
-                # CE-Q learning phase
-                q_target, ce_policy, q_next = update_q_with_ce(
-                    q_model, obs, acts, adv_acts, obs_next,
-                    rewards, dones, train_args['gamma'], tau
-                )
+                # CE-Q learning phase with proper next state handling
+                if transition_mask is None or transition_mask.sum() == 0:
+                    continue
+                    
+                # Get current Q values
+                q_current = q_model(obs, acts, adv_acts)
+                
+                # Handle action selection for current Q
+                if len(q_current.shape) == 3:
+                    q_current_flat = (q_current * adv_acts).sum(dim=-1)
+                else:
+                    q_current_flat = q_current.view(batch_size, obs_len)
+                
+                # Prepare next state data
+                obs_next = obs.clone()
+                obs_next[:, :-1] = obs[:, 1:]
+                obs_next[:, -1] = obs[:, -1]  # Terminal state handling
+                
+                acts_next = acts.clone()
+                acts_next[:, :-1] = acts[:, 1:]
+                acts_next[:, -1] = acts[:, -1]
+                
+                adv_acts_next = adv_acts.clone()
+                adv_acts_next[:, :-1] = adv_acts[:, 1:]
+                adv_acts_next[:, -1] = adv_acts[:, -1]
 
-                q_pred = q_model(obs, acts, adv_acts).view(batch_size, T)
-                mse_loss = F.mse_loss(q_pred, q_target)
-                ce_loss = incentive_violation_loss_zero_sum(ce_policy, q_next)
+                # Compute next Q values
+                with torch.no_grad():
+                    q_next = q_model(obs_next, acts_next, adv_acts_next)
+                    
+                    if len(q_next.shape) == 3:
+                        # For CE, we need to consider all action combinations
+                        A1, A2 = acts.shape[-1], adv_acts.shape[-1]
+                        q_next_reshaped = q_next.view(batch_size, -1, A1, A2)
+                        ce_policy = approx_ce_batch(q_next_reshaped, tau)
+                        next_value = (ce_policy * q_next_reshaped).sum(dim=[2, 3])
+                    else:
+                        next_value = q_next.view(batch_size, obs_len)
+
+                # Bellman backup like Implicit Q
+                q_pred = q_current_flat[:, :-1]
+                v_next = next_value[:, 1:].detach()
+                q_target = immediate_rewards + train_args['gamma'] * v_next
+                q_target = torch.clamp(q_target, -1e6, 1e6)
+                
+                # Q loss
+                mse_loss = (((q_pred - q_target) ** 2) * transition_mask).sum() / transition_mask.sum()
+                
+                # CE loss if we have the policy
+                if len(q_next.shape) == 3:
+                    ce_loss = incentive_violation_loss_zero_sum(ce_policy, q_next_reshaped)
+                else:
+                    ce_loss = torch.tensor(0.0, device=device)
+                
                 total_loss = mse_loss + lambda_ce * ce_loss
+
+            # Check for NaN/Inf like Implicit Q
+            if torch.isnan(total_loss) or torch.isinf(total_loss):
+                print(f"❌ FATAL: NaN/Inf detected in total_loss at epoch {epoch}")
+                raise RuntimeError("Training stopped due to NaN/Inf in loss")
 
             optimizer.zero_grad()
             total_loss.backward()
@@ -172,18 +213,31 @@ def correlated_q_learning(
 
             total_q_loss += mse_loss.item()
             total_ce_loss += ce_loss.item()
-            num_batches += 1
+            
+            # Update progress bar like Implicit Q
+            pbar.set_description(f"Epoch {epoch} ({phase}) | "
+                               f"Q Loss: {total_q_loss/num_batches:.6f} | "
+                               f"CE Loss: {total_ce_loss/num_batches:.6f}")
 
+        # Step scheduler like Implicit Q
+        scheduler.step()
+        
         avg_q_loss = total_q_loss / num_batches
         avg_ce_loss = total_ce_loss / num_batches
-        print(f"Epoch {epoch} ({phase}): Q Loss = {avg_q_loss:.6f}, CE Loss = {avg_ce_loss:.6f}")
+        print(f"Epoch {epoch} ({phase}): Q Loss = {avg_q_loss:.6f}, CE Loss = {avg_ce_loss:.6f}, LR = {scheduler.get_last_lr()[0]:.6f}")
+        
+        # Early stopping like Implicit Q
+        if epoch >= mse_epochs and avg_q_loss > 100:
+            print(f"⚠️  WARNING: Loss explosion detected (avg loss: {avg_q_loss:.3f})")
+            print("   Stopping training early to prevent further instability")
+            break
 
-    return q_model
+    return q_model, scale_factor
 
 
 def evaluate_q_model(q_model, trajs, obs_size, action_size, adv_action_size,
-                     action_type, device, is_discretize=False):
-    """Evaluate Q-model on trajectories and compute statistics with simple debug logs."""
+                     action_type, device, scale_factor, is_discretize=False):
+    """Evaluate Q-model on trajectories and compute statistics."""
     q_model.eval()
     all_q_preds = []
     all_true_returns = []
@@ -197,7 +251,6 @@ def evaluate_q_model(q_model, trajs, obs_size, action_size, adv_action_size,
 
             if action_type == "discrete" and not is_discretize:
                 if acts.dim() == 1 or (acts.dim() == 2 and acts.shape[-1] != action_size):
-                    # print(f"[{i}] One-hot encoding discrete actions")
                     acts = F.one_hot(acts.long().squeeze(), num_classes=action_size).float()
                     adv_acts = F.one_hot(adv_acts.long().squeeze(), num_classes=adv_action_size).float()
                 if acts.dim() == 2:
@@ -208,11 +261,20 @@ def evaluate_q_model(q_model, trajs, obs_size, action_size, adv_action_size,
                     acts = acts.float().view(1, -1, action_size)
                     adv_acts = adv_acts.float().view(1, -1, adv_action_size)
                 except Exception as e:
-                    # print(f"[{i}] Warning: Unable to reshape continuous actions: {e}")
                     continue
 
             try:
-                q_preds = q_model(obs, acts, adv_acts).cpu().flatten().numpy()
+                q_preds_raw = q_model(obs, acts, adv_acts)
+                
+                # Handle action selection like in training
+                if len(q_preds_raw.shape) == 3:
+                    q_preds = (q_preds_raw * adv_acts).sum(dim=-1).cpu().flatten().numpy()
+                else:
+                    q_preds = q_preds_raw.cpu().flatten().numpy()
+                
+                # De-scale like Implicit Q to match original reward scale
+                q_preds = q_preds / scale_factor
+                
                 true_returns = np.array([np.sum(traj.rewards[t:]) for t in range(len(traj.rewards))])
 
                 length = min(len(q_preds), len(true_returns))
@@ -223,7 +285,6 @@ def evaluate_q_model(q_model, trajs, obs_size, action_size, adv_action_size,
                 all_true_returns.extend(true_returns)
                 traj_q_vals.append(q_preds)
             except Exception as e:
-                # print(f"[{i}] Error evaluating trajectory: {e}")
                 continue
 
     all_q_preds = np.array(all_q_preds)
@@ -258,16 +319,16 @@ def maxmin(
     is_discretize: bool = False,
 ) -> tuple[np.ndarray, float]:
     """
-    Correlated Q-Learning implementation matching ARDT format, without scaling.
+    Fixed Correlated Q-Learning implementation matching Implicit Q patterns.
     
     Returns:
         relabeled_trajs: Trajectories with Q-value based returns-to-go
         prompt_value: Maximum initial Q-value across trajectories
     """
 
-    print("=== Correlated Q-Learning ===")
+    print("=== Fixed Correlated Q-Learning (Matching Implicit Q) ===")
 
-    # Compute dataset statistics
+    # Compute dataset statistics like Implicit Q
     all_rewards = []
     for traj in trajs:
         episode_reward = np.sum(traj.rewards)
@@ -276,7 +337,7 @@ def maxmin(
     print(f"Dataset size: {len(trajs)} episodes")
     print(f"Reward stats: mean={np.mean(all_rewards):.3f}, std={np.std(all_rewards):.3f}")
 
-    # Setup action spaces
+    # Setup action spaces like Implicit Q
     if isinstance(action_space, gym.spaces.Discrete):
         obs_size = np.prod(trajs[0].obs[0].shape)
         action_size = action_space.n
@@ -293,7 +354,7 @@ def maxmin(
 
     # STEP 1: Train Correlated Q-Learning Model
     print("\n=== Step 1: Correlated Q-Learning Training ===")
-    q_model = correlated_q_learning(
+    q_model, scale_factor = correlated_q_learning(
         trajs, obs_size, action_size, adv_action_size,
         train_args, device, is_simple_model, action_type
     )
@@ -302,10 +363,10 @@ def maxmin(
     print("\n=== Step 2: Q-Model Evaluation ===")
     learned_q_values, prompt_value = evaluate_q_model(
         q_model, trajs, obs_size, action_size, adv_action_size,
-        action_type, device, is_discretize
+        action_type, device, scale_factor, is_discretize
     )
 
-    # STEP 3: Trajectory Relabeling with Q-values
+    # STEP 3: Trajectory Relabeling with Q-values like Implicit Q
     print("\n=== Step 3: Trajectory Relabeling with Q-values ===")
     relabeled_trajs = []
 
@@ -314,13 +375,14 @@ def maxmin(
         relabeled_traj = deepcopy(traj)
 
         # Replace returns-to-go with Q-value estimates
-        # Round to 3 decimal places like in the original code
-        new_returns_to_go = np.round(q_vals, decimals=3).tolist()
+        new_returns_to_go = q_vals.tolist()
 
         relabeled_traj.minimax_returns_to_go = new_returns_to_go
         relabeled_trajs.append(relabeled_traj)
 
     print(f"Relabeled {len(relabeled_trajs)} trajectories with minimax returns-to-go")
+    
+    # Get final prompt value like Implicit Q
     initial_minimax_returns_all = [t.minimax_returns_to_go[0] for t in relabeled_trajs
                                    if hasattr(t, 'minimax_returns_to_go') and t.minimax_returns_to_go
                                    and len(t.minimax_returns_to_go) > 0]
@@ -329,5 +391,7 @@ def maxmin(
         prompt_value = np.max(initial_minimax_returns_all)
     else:
         prompt_value = 0.0
+
+    print(f"Relabeling complete. Prompt value: {prompt_value:.3f}")
 
     return relabeled_trajs, np.round(prompt_value, decimals=3)

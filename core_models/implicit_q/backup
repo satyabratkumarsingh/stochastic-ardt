@@ -1,0 +1,537 @@
+import gym
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from tqdm.autonotebook import tqdm
+from copy import deepcopy
+from data_class.trajectory import Trajectory
+from core_models.base_models.base_model import RtgFFN, RtgLSTM
+from core_models.implicit_q.value_net import ValueNet
+from core_models.dataset.ardt_dataset import ARDTDataset
+
+def debug_tensor_info(tensor, name):
+    pass
+
+def _iql_loss_v(q_values, v_values, timestep_mask, tau=0.7):
+    """Enhanced IQL V loss with progressive tau"""
+    batch_size, obs_len = q_values.shape[0], q_values.shape[1]
+    
+    # Ensure 2D outputs like ARDT
+    if len(q_values.shape) == 3:
+        q_flat = q_values.view(batch_size, obs_len)
+    else:
+        q_flat = q_values
+        
+    if len(v_values.shape) == 3:
+        v_flat = v_values.view(batch_size, obs_len)
+    else:
+        v_flat = v_values
+    
+    # Use ARDT's mask (True for valid timesteps)
+    valid_mask = timestep_mask.float()
+    
+    if valid_mask.sum() == 0:
+        return torch.tensor(0.0, device=q_values.device, requires_grad=True)
+    
+    # Compute difference: Q - V
+    diff = q_flat - v_flat
+    
+    # Use the provided tau (now progressive)
+    # Remove adaptive tau to use progressive tau strategy
+    
+    # Expectile loss exactly like ARDT
+    weight = torch.where(diff >= 0, tau, 1 - tau)
+    expectile_loss = weight * (diff ** 2)
+    
+    # Apply mask and compute mean like ARDT
+    masked_loss = expectile_loss * valid_mask
+    loss = masked_loss.sum() / valid_mask.sum()
+    
+    return loss.clamp(min=1e-8)
+
+
+def _iql_loss_q(q_values, immediate_rewards, v_values, transition_mask, gamma):
+    """IQL Q loss using ARDT's transition masking"""
+    if transition_mask is None or transition_mask.sum() == 0:
+        return torch.tensor(0.0, device=q_values.device, requires_grad=True)
+    
+    batch_size, obs_len = q_values.shape[0], q_values.shape[1]
+    
+    # Ensure 2D outputs like ARDT
+    if len(q_values.shape) == 3:
+        q_flat = q_values.view(batch_size, obs_len)
+    else:
+        q_flat = q_values
+        
+    if len(v_values.shape) == 3:
+        v_flat = v_values.view(batch_size, obs_len)
+    else:
+        v_flat = v_values
+    
+    # Q-learning target: r + γV(s') - using transitions only
+    q_pred = q_flat[:, :-1]  # Current Q-values
+    v_next = v_flat[:, 1:].detach()  # Next V-values (detached)
+    q_target = immediate_rewards + gamma * v_next
+    q_target = torch.clamp(q_target, -1e6, 1e6)
+    
+    # MSE loss on valid transitions only
+    loss = (((q_pred - q_target) ** 2) * transition_mask).sum() / transition_mask.sum()
+    
+    return torch.clamp(loss, 0.0, 1e6)
+
+
+def _q_only_loss(q_values, immediate_rewards, transition_mask, gamma, use_max=True):
+    """Q-only loss using ARDT's transition masking"""
+    if transition_mask is None or transition_mask.sum() == 0:
+        return torch.tensor(0.0, device=q_values.device, requires_grad=True)
+    
+    batch_size, obs_len = q_values.shape[0], q_values.shape[1]
+    
+    # Ensure 2D outputs
+    if len(q_values.shape) == 3:
+        q_flat = q_values.view(batch_size, obs_len)
+    else:
+        q_flat = q_values
+    
+    # Current and next Q-values for transitions
+    q_pred = q_flat[:, :-1]  # [batch_size, seq_len-1]
+    q_next = q_flat[:, 1:].detach()  # [batch_size, seq_len-1]
+    
+    # For multi-action case, apply max/min
+    if len(q_values.shape) == 3 and q_values.shape[-1] > 1:
+        if use_max:
+            q_pred = q_values[:, :-1].max(dim=-1)[0]
+            q_next = q_values[:, 1:].detach().max(dim=-1)[0]
+        else:
+            q_pred = q_values[:, :-1].min(dim=-1)[0]
+            q_next = q_values[:, 1:].detach().min(dim=-1)[0]
+    
+    # Compute target: r + γ max/min Q(s',a')
+    q_target = immediate_rewards + gamma * q_next
+    q_target = torch.clamp(q_target, -1e6, 1e6)
+    
+    # MSE loss on valid transitions
+    loss = (((q_pred - q_target) ** 2) * transition_mask).sum() / transition_mask.sum()
+    
+    return torch.clamp(loss, 0.0, 1e6)
+
+
+def evaluate_models_enhanced(qsa_pr_model, qsa_adv_model, v_model, dataloader, device, prev_metrics=None):
+    """Enhanced evaluation with collapse detection"""
+    with torch.no_grad():
+        obs, acts, adv_acts, ret, seq_len = next(iter(dataloader))
+        batch_size, obs_len = obs.shape[0], obs.shape[1]
+        
+        obs = obs.view(batch_size, obs_len, -1).to(device)
+        acts = acts.to(device)
+        adv_acts = adv_acts.to(device)
+        ret = ret.to(device)
+        
+        # Use ARDT's masking pattern
+        timestep_mask = torch.arange(obs_len, device=device)[None, :] < seq_len[:, None]
+        valid_mask = timestep_mask.float()
+        
+        pred_pr = qsa_adv_model(obs, acts, adv_acts)  # SWAPPED
+        pred_adv = qsa_pr_model(obs, acts)            # SWAPPED
+        pred_v = v_model(obs)
+        
+        # Ensure 2D for averaging
+        if len(pred_pr.shape) == 3:
+            pred_pr = pred_pr.view(batch_size, obs_len)
+        if len(pred_adv.shape) == 3:
+            pred_adv = pred_adv.view(batch_size, obs_len)
+        if len(pred_v.shape) == 3:
+            pred_v = pred_v.view(batch_size, obs_len)
+        
+        if valid_mask.sum() > 0:
+            pred_pr_mean = (pred_pr * valid_mask).sum() / valid_mask.sum()
+            pred_adv_mean = (pred_adv * valid_mask).sum() / valid_mask.sum()
+            pred_v_mean = (pred_v * valid_mask).sum() / valid_mask.sum()
+            true_mean = (ret * valid_mask).sum() / valid_mask.sum()
+            
+            # Additional stability metrics
+            pred_pr_std = torch.sqrt(((pred_pr - pred_pr_mean) ** 2 * valid_mask).sum() / valid_mask.sum())
+            pred_v_std = torch.sqrt(((pred_v - pred_v_mean) ** 2 * valid_mask).sum() / valid_mask.sum())
+        else:
+            pred_pr_mean = pred_pr.mean()
+            pred_adv_mean = pred_adv.mean()
+            pred_v_mean = pred_v.mean()
+            true_mean = ret.mean()
+            pred_pr_std = pred_pr.std()
+            pred_v_std = pred_v.std()
+
+    # Current metrics
+    current_metrics = {
+        'pred_pr_mean': pred_pr_mean.item(),
+        'pred_adv_mean': pred_adv_mean.item(),
+        'pred_v_mean': pred_v_mean.item(),
+        'true_mean': true_mean.item(),
+        'pred_pr_std': pred_pr_std.item(),
+        'pred_v_std': pred_v_std.item()
+    }
+    
+    # Ordering checks
+    gap_pr_v = pred_pr_mean.item() - pred_v_mean.item()
+    gap_v_adv = pred_v_mean.item() - pred_adv_mean.item()
+    gap_pr_adv = pred_pr_mean.item() - pred_adv_mean.item()
+    
+    symbol_pr_v = "✅" if gap_pr_v >= -0.01 else "❌"
+    symbol_v_adv = "✅" if gap_v_adv >= -0.01 else "❌"
+    symbol_pr_adv = "✅" if gap_pr_adv >= -0.01 else "❌"
+    
+    # Collapse detection
+    collapse_warnings = []
+    if prev_metrics is not None:
+        # Check for rapid value decrease
+        v_change_pct = (current_metrics['pred_v_mean'] - prev_metrics['pred_v_mean']) / abs(prev_metrics['pred_v_mean'] + 1e-8) * 100
+        pr_change_pct = (current_metrics['pred_pr_mean'] - prev_metrics['pred_pr_mean']) / abs(prev_metrics['pred_pr_mean'] + 1e-8) * 100
+        
+        if v_change_pct < -5.0:
+            collapse_warnings.append(f"🚨 V dropping rapidly: {v_change_pct:.1f}%")
+        if pr_change_pct < -5.0:
+            collapse_warnings.append(f"🚨 Q_pr dropping rapidly: {pr_change_pct:.1f}%")
+        if gap_pr_v < 0.05:
+            collapse_warnings.append(f"🚨 Q_pr-V gap shrinking: {gap_pr_v:.4f}")
+    
+    print(f"   Eval -> True: {true_mean.item():.4f}")
+    print(f"         Q_pr: {pred_pr_mean.item():.4f}±{pred_pr_std.item():.3f}, "
+          f"V: {pred_v_mean.item():.4f}±{pred_v_std.item():.3f}, "
+          f"Q_adv: {pred_adv_mean.item():.4f}")
+    print(f"         Q_pr-V: {gap_pr_v:.4f} {symbol_pr_v}, "
+          f"V-Q_adv: {gap_v_adv:.4f} {symbol_v_adv}, "
+          f"Q_pr-Q_adv: {gap_pr_adv:.4f} {symbol_pr_adv}")
+    
+    if collapse_warnings:
+        print("   " + " | ".join(collapse_warnings))
+    
+    return current_metrics
+
+
+def maxmin(
+    trajs: list[Trajectory],
+    action_space: gym.spaces,
+    adv_action_space: gym.spaces,
+    train_args: dict,
+    device: str,
+    n_cpu: int,
+    is_simple_model: bool = False,
+    is_toy: bool = False,
+    is_discretize: bool = False,
+) -> tuple[np.ndarray, float]:
+    """
+    Enhanced Minimax training with progressive weights, tau, and stable updates.
+    """
+    print("=== Enhanced Sequential V→Q IQL Training ===")
+    
+    # Dataset statistics
+    all_rewards = [np.sum(traj.rewards) for traj in trajs]
+    print(f"Dataset: {len(trajs)} episodes, reward mean={np.mean(all_rewards):.3f}, std={np.std(all_rewards):.3f}")
+    print("NO SCALING - using raw return values like ARDT")
+    
+    # Action space setup
+    if isinstance(action_space, gym.spaces.Discrete):
+        obs_size = np.prod(trajs[0].obs[0].shape)
+        action_size = len(trajs[0].actions[0]) if len(trajs[0].actions) > 0 else action_space.n
+        adv_action_size = len(trajs[0].adv_actions[0]) if len(trajs[0].adv_actions) > 0 else adv_action_space.n
+        action_type = 'discrete'
+        print(f"Detected from data: obs={obs_size}, act={action_size}, adv_act={adv_action_size}")
+    else:
+        obs_size = np.prod(np.array(trajs[0].obs[0]).shape)
+        action_size = action_space.shape[0]
+        adv_action_size = adv_action_space.shape[0]
+        action_type = 'continuous'
+    print(f"Model dimensions: obs={obs_size}, act={action_size}, adv_act={adv_action_size}")
+
+    # Dataset and dataloader
+    max_len = max([len(traj.obs) for traj in trajs]) + 1
+    dataset = ARDTDataset(trajs, max_len, gamma=train_args['gamma'], act_type=action_type)
+    dataloader = torch.utils.data.DataLoader(
+        dataset, batch_size=train_args['batch_size'], num_workers=n_cpu
+    )
+
+    # Models - no biased initialization
+    print(f'Creating models (simple={is_simple_model})...')
+    if is_simple_model:
+        qsa_pr_model = RtgFFN(obs_size, action_size, include_adv=False).to(device)
+        qsa_adv_model = RtgFFN(obs_size, action_size, adv_action_size, include_adv=True).to(device)
+        v_model = ValueNet(obs_size, is_lstm=False).to(device)
+    else:
+        qsa_pr_model = RtgLSTM(obs_size, action_size, adv_action_size, train_args, include_adv=False).to(device)
+        qsa_adv_model = RtgLSTM(obs_size, action_size, adv_action_size, train_args, include_adv=True).to(device)
+        v_model = ValueNet(obs_size, train_args, is_lstm=True).to(device)
+
+    # Optimizers with conservative learning rates
+    base_lr = train_args['model_lr'] * 0.1
+    qsa_pr_optimizer = torch.optim.AdamW(
+        qsa_pr_model.parameters(), lr=base_lr, weight_decay=train_args.get('model_wd', 1e-4)
+    )
+    qsa_adv_optimizer = torch.optim.AdamW(
+        qsa_adv_model.parameters(), lr=base_lr, weight_decay=train_args.get('model_wd', 1e-4)
+    )
+    value_optimizer = torch.optim.AdamW(
+        v_model.parameters(), lr=base_lr, weight_decay=train_args.get('model_wd', 1e-4)
+    )
+
+    # Training parameters
+    mse_epochs = train_args.get('mse_epochs', 15)
+    maxmin_epochs = train_args.get('maxmin_epochs', 35)
+    total_epochs = mse_epochs + maxmin_epochs
+    gamma = train_args['gamma']
+    
+    # FIXED: Learning rate schedulers with minimum learning rate
+    min_lr = base_lr * 0.01  # Minimum 1% of base learning rate
+    
+    def lr_lambda(epoch):
+        # Cosine annealing that doesn't go to zero
+        progress = epoch / total_epochs
+        cosine_factor = 0.5 * (1 + np.cos(np.pi * progress))
+        # Scale between min_lr and base_lr
+        return min_lr / base_lr + (1 - min_lr / base_lr) * cosine_factor
+    
+    pr_scheduler = torch.optim.lr_scheduler.LambdaLR(qsa_pr_optimizer, lr_lambda)
+    adv_scheduler = torch.optim.lr_scheduler.LambdaLR(qsa_adv_optimizer, lr_lambda)
+    v_scheduler = torch.optim.lr_scheduler.LambdaLR(value_optimizer, lr_lambda)
+
+    print(f"Training schedule: {mse_epochs} MSE + {maxmin_epochs} Enhanced Sequential IQL = {total_epochs} epochs")
+    print("Using ENHANCED sequential V → Q updates with progressive weights and tau")
+    print(f"Learning rate: {base_lr:.6f} → {min_lr:.6f} (min)")
+    
+    # Training loop with metrics tracking
+    prev_metrics = None
+    
+    for epoch in range(total_epochs):
+        qsa_pr_model.train()
+        qsa_adv_model.train()
+        v_model.train()
+        
+        # ENHANCED: Progressive training parameters
+        if epoch >= mse_epochs:
+            progress = (epoch - mse_epochs) / maxmin_epochs
+            progress = max(0.0, min(1.0, progress))
+            
+            # Progressive loss weights (start gentle, gradually increase)
+            IQL_LOSS_WEIGHT = 0.02 + 0.06 * progress      # 0.02 → 0.08
+            Q_ONLY_LOSS_WEIGHT = 0.01 + 0.04 * progress   # 0.01 → 0.05
+            
+            # Progressive tau strategy (start symmetric, gradually asymmetric)
+            tau_pr = 0.5 + 0.2 * progress    # 0.5 → 0.7 (conservative for Q_pr)
+            tau_adv = 0.5 - 0.2 * progress   # 0.5 → 0.3 (aggressive for Q_adv)
+        else:
+            # MSE phase - no IQL yet
+            IQL_LOSS_WEIGHT = 0.0
+            Q_ONLY_LOSS_WEIGHT = 0.0
+            tau_pr = 0.5
+            tau_adv = 0.5
+            progress = 0.0
+        
+        pbar = tqdm(dataloader, total=len(dataloader))
+        epoch_loss = 0
+        epoch_pr_loss = 0
+        epoch_adv_loss = 0
+        epoch_v_loss = 0
+        epoch_iql_loss = 0
+        epoch_q_only_loss = 0
+        n_batches = 0
+
+        for obs, acts, adv_acts, ret, seq_len in pbar:
+            n_batches += 1
+           
+            if is_toy:
+                obs, acts, adv_acts, ret = (
+                    obs[:, :-1], acts[:, :-1], adv_acts[:, :-1], ret[:, :-1]
+                )
+                seq_len = torch.clamp(seq_len - 1, min=1)
+
+            seq_len = torch.clamp(seq_len, max=obs.shape[1])
+            batch_size, obs_len = obs.shape[0], obs.shape[1]
+            
+            # Follow ARDT's exact data preparation
+            obs = obs.view(batch_size, obs_len, -1).to(device)
+            acts = acts.to(device)
+            adv_acts = adv_acts.to(device)
+            ret = ret.to(device)  # NO SCALING
+            
+            # CRITICAL FIX: Use ARDT's masking pattern
+            timestep_mask = torch.arange(obs_len, device=device)[None, :] < seq_len[:, None]
+            transition_mask = timestep_mask[:, :-1] & timestep_mask[:, 1:] if obs_len > 1 else None
+            
+            # Compute immediate rewards like ARDT
+            if obs_len > 1:
+                immediate_rewards = ret[:, :-1] - gamma * ret[:, 1:]
+                immediate_rewards = torch.clamp(immediate_rewards, -1e6, 1e6)
+            else:
+                immediate_rewards = torch.zeros(batch_size, 0, device=device)
+
+            # Model predictions (SWAPPED as in original)
+            ret_pr_pred = qsa_adv_model(obs, acts, adv_acts)  # This is zero-risk
+            ret_adv_pred = qsa_pr_model(obs, acts)            # This is risk-seeking
+            v_pred = v_model(obs)
+            
+            # Ensure 2D outputs like ARDT
+            if len(ret_pr_pred.shape) == 3:
+                ret_pr_pred = ret_pr_pred.view(batch_size, obs_len)
+            if len(ret_adv_pred.shape) == 3:
+                ret_adv_pred = ret_adv_pred.view(batch_size, obs_len)
+            if len(v_pred.shape) == 3:
+                v_pred = v_pred.view(batch_size, obs_len)
+            
+            # Clamp predictions for stability
+            ret_pr_pred = torch.clamp(ret_pr_pred, -1e6, 1e6)
+            ret_adv_pred = torch.clamp(ret_adv_pred, -1e6, 1e6)
+            v_pred = torch.clamp(v_pred, -1e6, 1e6)
+
+            if epoch < mse_epochs:
+                # Phase 1: MSE pretraining like ARDT warmup
+                if timestep_mask.sum() > 0:
+                    pr_loss = (((ret_pr_pred - ret) ** 2) * timestep_mask.float()).sum() / timestep_mask.sum()
+                    adv_loss = (((ret_adv_pred - ret) ** 2) * timestep_mask.float()).sum() / timestep_mask.sum()
+                    v_loss = (((v_pred - ret) ** 2) * timestep_mask.float()).sum() / timestep_mask.sum()
+                else:
+                    pr_loss = adv_loss = v_loss = torch.tensor(0.0, device=device, requires_grad=True)
+                
+                # Separate optimizer steps like ARDT with enhanced clipping
+                qsa_pr_optimizer.zero_grad()
+                if pr_loss.requires_grad:
+                    pr_loss.backward()
+                    torch.nn.utils.clip_grad_norm_(qsa_pr_model.parameters(), max_norm=0.1)
+                    qsa_pr_optimizer.step()
+                
+                qsa_adv_optimizer.zero_grad()
+                if adv_loss.requires_grad:
+                    adv_loss.backward()
+                    torch.nn.utils.clip_grad_norm_(qsa_adv_model.parameters(), max_norm=0.1)
+                    qsa_adv_optimizer.step()
+                
+                value_optimizer.zero_grad()
+                if v_loss.requires_grad:
+                    v_loss.backward()
+                    torch.nn.utils.clip_grad_norm_(v_model.parameters(), max_norm=0.1)
+                    value_optimizer.step()
+                
+                total_loss = pr_loss + adv_loss + v_loss
+                epoch_pr_loss += pr_loss.item()
+                epoch_adv_loss += adv_loss.item()
+                epoch_v_loss += v_loss.item()
+            else:
+                # Phase 2: ENHANCED SEQUENTIAL V → Q IQL UPDATES
+                
+                # STEP 1: Update V network with progressive tau
+                value_optimizer.zero_grad()
+                
+                v_loss_pr = _iql_loss_v(ret_pr_pred.detach(), v_pred, timestep_mask, tau=0.7)
+                v_loss_adv = _iql_loss_v(ret_adv_pred.detach(), v_pred, timestep_mask, tau=0.3)
+                v_loss = 0.5 * v_loss_pr + 0.5 * v_loss_adv
+                
+                if v_loss.requires_grad:
+                    v_loss.backward()
+                    torch.nn.utils.clip_grad_norm_(v_model.parameters(), max_norm=0.)
+                    value_optimizer.step()
+                
+                # STEP 2: CRITICAL - Fresh V computation with updated parameters
+                qsa_pr_optimizer.zero_grad()
+                qsa_adv_optimizer.zero_grad()
+                
+                # Get fresh V predictions with updated parameters
+                with torch.no_grad():
+                    v_pred_fresh = v_model(obs)
+                    if len(v_pred_fresh.shape) == 3:
+                        v_pred_fresh = v_pred_fresh.view(batch_size, obs_len)
+                    v_pred_fresh = torch.clamp(v_pred_fresh, -1e6, 1e6)
+                
+                # Q losses using fresh, stable V targets
+                iql_loss_pr = _iql_loss_q(ret_pr_pred, immediate_rewards, v_pred_fresh, transition_mask, gamma)
+                iql_loss_adv = _iql_loss_q(ret_adv_pred, immediate_rewards, v_pred_fresh, transition_mask, gamma)
+                
+                # Q-only losses for additional stability
+                q_only_loss_pr = _q_only_loss(ret_pr_pred.unsqueeze(-1), immediate_rewards, transition_mask, gamma, use_max=True)
+                q_only_loss_adv = _q_only_loss(ret_adv_pred.unsqueeze(-1), immediate_rewards, transition_mask, gamma, use_max=False)
+                
+                # Combined Q losses with progressive weights
+                pr_total_loss = IQL_LOSS_WEIGHT * iql_loss_pr + Q_ONLY_LOSS_WEIGHT * q_only_loss_pr
+                adv_total_loss = IQL_LOSS_WEIGHT * iql_loss_adv + Q_ONLY_LOSS_WEIGHT * q_only_loss_adv
+                
+                # Update Q functions separately with enhanced clipping
+                if pr_total_loss.requires_grad:
+                    pr_total_loss.backward(retain_graph=True)
+                    torch.nn.utils.clip_grad_norm_(qsa_pr_model.parameters(), max_norm=0.5)
+                    qsa_pr_optimizer.step()
+                
+                if adv_total_loss.requires_grad:
+                    adv_total_loss.backward()
+                    torch.nn.utils.clip_grad_norm_(qsa_adv_model.parameters(), max_norm=0.5)
+                    qsa_adv_optimizer.step()
+                
+                # Total loss for logging
+                total_loss = v_loss + pr_total_loss + adv_total_loss
+                
+                epoch_v_loss += v_loss.item()
+                epoch_iql_loss += (iql_loss_pr + iql_loss_adv).item()
+                epoch_q_only_loss += (q_only_loss_pr + q_only_loss_adv).item()
+
+            epoch_loss += total_loss.item()
+            
+            # Enhanced progress bar with progressive parameters
+            phase = "MSE" if epoch < mse_epochs else "ENH-IQL"
+            if epoch >= mse_epochs:
+                pbar.set_description(f"Epoch {epoch} ({phase}) | "
+                                   f"Total: {epoch_loss/n_batches:.5f} | "
+                                   f"V: {epoch_v_loss/n_batches:.5f} | "
+                                   f"IQL: {epoch_iql_loss/n_batches:.5f} | "
+                                   f"Q-only: {epoch_q_only_loss/n_batches:.5f} | "
+                )
+            else:
+                pbar.set_description(f"Epoch {epoch} ({phase}) | "
+                                   f"Loss: {epoch_loss/n_batches:.6f} | "
+                                   f"V: {epoch_v_loss/n_batches:.6f}")
+
+        # Step learning rate schedulers
+        pr_scheduler.step()
+        adv_scheduler.step() 
+        v_scheduler.step()
+        
+        current_lr = pr_scheduler.get_last_lr()[0]
+        print(f"Epoch {epoch} completed - Average Loss: {epoch_loss/n_batches:.6f}, LR: {current_lr:.6f}")
+        
+        if epoch >= mse_epochs:
+            print(f"  Progressive params: IQL_weight={IQL_LOSS_WEIGHT:.3f}, tau_pr={tau_pr:.2f}, tau_adv={tau_adv:.2f}, progress={progress:.2f}")
+        
+        # Enhanced evaluation with collapse detection
+        if epoch % 5 == 0 or epoch >= total_epochs - 3:
+            phase_name = "MSE" if epoch < mse_epochs else "Enhanced-IQL"
+            print(f"{phase_name} Epoch {epoch}:")
+            current_metrics = evaluate_models_enhanced(qsa_pr_model, qsa_adv_model, v_model, dataloader, device, prev_metrics)
+            prev_metrics = current_metrics
+
+    # Trajectory relabeling (unchanged)
+    print("\n=== Trajectory Relabeling ===")
+    qsa_pr_model.eval()
+    
+    with torch.no_grad():
+        relabeled_trajs = []
+        prompt_value = -np.inf
+        
+        for traj in tqdm(trajs, desc="Relabeling trajectories"):
+            obs = torch.from_numpy(np.array(traj.obs)).float().to(device).view(1, -1, obs_size)
+            acts = torch.from_numpy(np.array(traj.actions)).to(device)
+            
+            if action_type == "discrete" and not is_discretize:
+                acts = acts.float().view(1, -1, action_size)
+            else:
+                acts = acts.view(1, -1, action_size)
+                
+            returns = qsa_pr_model(obs, acts)
+            if len(returns.shape) == 3:
+                returns = returns.view(1, -1)
+            returns = returns.cpu().flatten().numpy()
+            
+            if len(returns) > 0 and prompt_value < returns[0]:
+                prompt_value = returns[0]
+                
+            relabeled_traj = deepcopy(traj)
+            relabeled_traj.minimax_returns_to_go = returns.tolist()
+            relabeled_trajs.append(relabeled_traj)
+
+    print(f"Relabeling complete. Prompt value: {prompt_value:.3f}")
+    
+    return relabeled_trajs, np.round(prompt_value, decimals=3)

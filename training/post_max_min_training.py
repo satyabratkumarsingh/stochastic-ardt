@@ -16,14 +16,13 @@ from typing import Dict, List, Optional, Tuple
 from training.dt_trainer import DecisionTransformerTrainer
 from training.bc_trainer import BehaviourCloningTrainer
 
-def train_dt_baseline(seed, game_name, method, dt_train_args, n_cpu = 1, device = 'cpu'):
+def train_dt_models(seed, game_name, method, dt_train_args, n_cpu = 1, device = 'cpu'):
 
     dt_trainer = DecisionTransformerTrainer(seed, game_name, dt_train_args, n_cpu , device)
     trajectories, prompt_value = get_relabeled_trajectories(seed, game_name, method)
-    return dt_trainer.train(trajectories, method = method)
-
-    # bc_trainer = BehaviourCloningTrainer(seed, game_name, dt_train_args, n_cpu , device)
-    # bc_trainer.train(trajectories, is_implicit = is_implicit)
+    both_models =  dt_trainer.train_and_save_both(trajectories, method = method)
+    print("==========Both decision transformer models trained successfully ============")
+    return both_models
 
 
 

@@ -3,7 +3,7 @@
 seed=3  # desired seed
 algo=ardt   # ardt, dt, esper
 device=cpu  # or cuda
-export WANDB_API_KEY=91513e3bf41fe06839a645ba89f6dd2e1724a218
+
 
 echo "⚙️  Starting main.py with debugpy on port 5678"
 echo "🚦 Waiting for VS Code debugger to attach..."

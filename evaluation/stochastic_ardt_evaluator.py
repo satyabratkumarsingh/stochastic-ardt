@@ -10,9 +10,127 @@ from pathlib import Path
 from typing import Tuple, List, Optional, Callable, Dict, Any
 import gym
 from core_models.decision_transformer.decision_transformer import DecisionTransformer
-from core_models.behaviour_cloning.behaviour_cloning import MLPBCModel
-from utils.saved_names import dt_model_name, behaviour_cloning_model_name
+from utils.saved_names import dt_model_name
 import matplotlib.pyplot as plt
+
+
+class ARDTModelLoader:
+    """
+    Handles loading of saved ARDT models (minimax and original)
+    """
+    
+    def __init__(self, seed: int, game_name: str, config_path: str, device: str = 'cpu'):
+        self.seed = seed
+        self.game_name = game_name
+        self.device = device
+        
+        # Load config for model architecture parameters
+        config = yaml.safe_load(Path(config_path).read_text())
+        self.dt_train_args = config
+    
+    def load_model(self, method: str, model_type: str = "minimax") -> Tuple[torch.nn.Module, Dict]:
+        """
+        Load a specific DT model
+        
+        Args:
+            method: Training method used
+            model_type: Either "minimax" or "original"
+        """
+        # Create model path with suffix
+        base_path = dt_model_name(seed=self.seed, game=self.game_name, method=method)
+        
+        if base_path.endswith('.pth'):
+            model_path = base_path.replace('.pth', f'_{model_type}.pth')
+        else:
+            model_path = f"{base_path}_{model_type}.pth"
+        
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"Model file not found: {model_path}")
+        
+        # Load checkpoint
+        checkpoint = torch.load(model_path, map_location=self.device)
+        model_params = checkpoint["model_params"]
+        
+        # Extract parameters from saved model_params
+        obs_size = model_params['obs_size']
+        action_size = model_params['action_size']
+        action_type = model_params['action_type']
+        horizon = model_params['horizon']
+        effective_max_ep_len = model_params['effective_max_ep_len']
+        
+        # Recreate model using saved parameters
+        dt_model = DecisionTransformer(
+            state_dim=obs_size,
+            act_dim=action_size,
+            hidden_size=32,          # Match the checkpoint's hidden size
+            max_length=horizon,
+            max_ep_len=effective_max_ep_len,
+            action_tanh=(action_type == 'continuous'),
+            action_type=action_type,
+            n_layer=2,               # Match the number of layers from the checkpoint
+            n_head=1,                # Match the number of heads
+            n_inner=256,             # Match the inner size from the checkpoint
+            dropout=0.1
+        ).to(self.device)
+        
+        # Load state dict
+        dt_model.load_state_dict(checkpoint["model_state_dict"])
+        dt_model.eval()
+        
+        print(f"✅ Loaded {model_type} DT model from {model_path}")
+        print(f"   Model params: state_dim={obs_size}, act_dim={action_size}, action_type={action_type}")
+        
+        return dt_model, model_params
+    
+    def load_both_models(self, method: str) -> Dict[str, Tuple[torch.nn.Module, Dict]]:
+        """
+        Load both minimax and original models
+        
+        Returns:
+            Dictionary with 'minimax' and 'original' keys containing (model, params) tuples
+        """
+        models = {}
+        
+        try:
+            minimax_model, minimax_params = self.load_model(method, "minimax")
+            models['minimax'] = (minimax_model, minimax_params)
+            print("✅ Minimax model loaded successfully")
+        except FileNotFoundError as e:
+            print(f"❌ Failed to load minimax model: {e}")
+            models['minimax'] = None
+        except Exception as e:
+            print(f"❌ Failed to load minimax model: {e}")
+            models['minimax'] = None
+        
+        try:
+            original_model, original_params = self.load_model(method, "original")
+            models['original'] = (original_model, original_params)
+            print("✅ Original model loaded successfully")
+        except FileNotFoundError as e:
+            print(f"❌ Failed to load original model: {e}")
+            models['original'] = None
+        except Exception as e:
+            print(f"❌ Failed to load original model: {e}")
+            models['original'] = None
+        
+        return models
+    
+    def get_model_info(self, method: str, model_type: str = "minimax") -> Dict:
+        """
+        Get model information without loading the full model
+        """
+        base_path = dt_model_name(seed=self.seed, game=self.game_name, method=method)
+        
+        if base_path.endswith('.pth'):
+            model_path = base_path.replace('.pth', f'_{model_type}.pth')
+        else:
+            model_path = f"{base_path}_{model_type}.pth"
+        
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"Model file not found: {model_path}")
+        
+        checkpoint = torch.load(model_path, map_location='cpu')
+        return checkpoint["model_params"]
 
 
 class ARDTEvaluator:
@@ -21,30 +139,78 @@ class ARDTEvaluator:
         self,
         env_name: str,
         env_instance,
-        state_dim: int,
-        act_dim: int,
-        action_type: str,
-        max_ep_len: int,
-        scale: float,
-        state_mean: np.ndarray,
-        state_std: np.ndarray,
-        adv_act_dim: Optional[int] = None,
+        model_params: Dict,
+        scale: float = 1.0,
+        state_mean: Optional[np.ndarray] = None,
+        state_std: Optional[np.ndarray] = None,
         normalize_states: bool = True,
         device: str = 'cpu'
     ):
+        """
+        Initialize evaluator using model parameters from saved checkpoint
+        
+        Args:
+            env_name: Name of the environment
+            env_instance: Environment instance
+            model_params: Model parameters dictionary from saved checkpoint
+            scale: Scaling factor for returns
+            state_mean: State normalization mean (optional)
+            state_std: State normalization std (optional)
+            normalize_states: Whether to normalize states
+            device: Device to run evaluation on
+        """
         self.env_name = env_name
         self.env_instance = env_instance
-        self.state_dim = state_dim
-        self.act_dim = act_dim
-        self.action_type = action_type
-        self.max_ep_len = max_ep_len
-        self.scale = scale
-        self.adv_act_dim = adv_act_dim or act_dim
         self.normalize_states = normalize_states
         self.device = device
+        self.scale = scale
         
-        self.state_mean = torch.from_numpy(state_mean).float().to(device)
-        self.state_std = torch.from_numpy(state_std).float().to(device)
+        # Extract parameters from model_params
+        self.state_dim = model_params['obs_size']
+        self.act_dim = model_params['action_size']
+        self.action_type = model_params['action_type']
+        self.max_ep_len = model_params['effective_max_ep_len']
+        
+        # Set up state normalization if provided
+        if state_mean is not None and state_std is not None:
+            self.state_mean = torch.from_numpy(state_mean).float().to(device)
+            self.state_std = torch.from_numpy(state_std).float().to(device)
+        else:
+            self.state_mean = None
+            self.state_std = None
+            self.normalize_states = False
+        
+        print(f"✅ ARDTEvaluator initialized:")
+        print(f"   Environment: {env_name}")
+        print(f"   State dim: {self.state_dim}, Action dim: {self.act_dim}")
+        print(f"   Action type: {self.action_type}, Max episode length: {self.max_ep_len}")
+        print(f"   Scale: {scale}, Normalize states: {self.normalize_states}")
+
+    @classmethod
+    def from_model_params(
+        cls,
+        env_name: str,
+        env_instance,
+        model_params: Dict,
+        scale: float = 1.0,
+        state_mean: Optional[np.ndarray] = None,
+        state_std: Optional[np.ndarray] = None,
+        normalize_states: bool = True,
+        device: str = 'cpu'
+    ):
+        """
+        Factory method to create evaluator from model parameters
+        """
+        return cls(
+            env_name=env_name,
+            env_instance=env_instance,
+            model_params=model_params,
+            scale=scale,
+            state_mean=state_mean,
+            state_std=state_std,
+            normalize_states=normalize_states,
+            device=device
+        )
 
     def _decode_kuhn_state(self, state: np.ndarray) -> str:
         if self.env_name != "kuhn_poker":
@@ -88,7 +254,6 @@ class ARDTEvaluator:
         else:
             return env.step(action)
 
-            
     def _normal_case_env_step(self, action: Any, env) -> Tuple:
         """Standard environment step."""
         action = int(np.argmax(action) if isinstance(action, (np.ndarray, torch.Tensor)) and action.size > 1 else action)
@@ -99,13 +264,12 @@ class ARDTEvaluator:
         else:
             return step_result
 
-    # 
     def evaluate_single_episode(
-    self,
-    model: torch.nn.Module,
-    target_return: float,
-    step_fn: Callable,
-    debug: bool = False
+        self,
+        model: torch.nn.Module,
+        target_return: float,
+        step_fn: Callable,
+        debug: bool = False
     ) -> tuple[float, list[int]]:
         debug = False
         env = self._get_env()
@@ -193,12 +357,17 @@ class ARDTEvaluator:
 
         return episode_return, episode_actions
 
-
-    def create_eval_function(self, model_type: str, worst_case: bool = False, debug: bool = False) -> Callable:
+    def create_eval_function(self, case_type: str = "normal", debug: bool = False) -> Callable:
         """
-        Creates a single, unified evaluation function for a given model type and case.
+        Creates a single, unified evaluation function for a given case.
+        
+        Args:
+            case_type: "normal" or "worst"
         """
-        step_fn = self._worst_case_env_step if worst_case else self._normal_case_env_step
+        if case_type == "worst":
+            step_fn = self._worst_case_env_step
+        else:
+            step_fn = self._normal_case_env_step
 
         def eval_fn(model: torch.nn.Module, target_return: float, num_episodes: int = 50):
             model.eval()
@@ -206,7 +375,7 @@ class ARDTEvaluator:
             episode_actions = []
             
             with torch.no_grad():
-                for ep in tqdm(range(num_episodes), desc=f"Evaluating R={target_return} ({'Worst' if worst_case else 'Normal'})"):
+                for ep in tqdm(range(num_episodes), desc=f"Evaluating R={target_return} ({case_type.capitalize()})"):
                     episode_debug = debug and ep < 3
                     
                     episode_return, actions = self.evaluate_single_episode(
@@ -218,59 +387,66 @@ class ARDTEvaluator:
             return episode_returns, episode_actions
         return eval_fn
 
-    def comprehensive_dual_evaluation(
+    def comprehensive_model_evaluation(
         self,
-        model: torch.nn.Module,
+        minimax_model: torch.nn.Module,
+        method: str = "minimax",
         target_returns: List[float] = None,
         num_episodes_per_target: int = 500,
         save_path: str = "evaluation_results"
     ) -> Dict:
         """
-        Runs comprehensive evaluation on both normal and worst-case scenarios.
-        Saves and plots the results.
+        Runs comprehensive evaluation for minimax model on normal and worst-case scenarios.
         """
         if target_returns is None:
             target_returns = [-2.0, -1.0, 0.0, 1.0, 2.0]
         
-        print("🚀 Starting Comprehensive Dual ARDT Evaluation...")
-        print("=" * 60)
+        print("🚀 Starting Comprehensive Minimax Model Evaluation...")
+        print("=" * 70)
         
-        results = {'normal': {}, 'worst_case': {}}
+        results = {
+            'minimax_normal': {},
+            'minimax_worst': {}
+        }
         
-        # --- Normal Case Evaluation ---
-        print("\n** Evaluating Normal Case **")
-        eval_fn_normal = self.create_eval_function(model_type='dt', worst_case=False)
+        # Create evaluation functions
+        eval_fn_normal = self.create_eval_function(case_type="normal")
+        eval_fn_worst = self.create_eval_function(case_type="worst")
+        
+        # --- Minimax Model Evaluation ---
+        print("\n** Evaluating Minimax Model - Normal Case **")
         for target in target_returns:
-            returns, _ = eval_fn_normal(model, target, num_episodes=num_episodes_per_target)
-            results['normal'][f'target_{target}'] = {
+            returns, _ = eval_fn_normal(minimax_model, target, num_episodes=num_episodes_per_target)
+            results['minimax_normal'][f'target_{target}'] = {
                 'mean': np.mean(returns),
                 'std': np.std(returns),
                 'returns': returns
             }
         
-        # --- Worst-Case Evaluation ---
-        print("\n** Evaluating Worst-Case **")
-        eval_fn_worst = self.create_eval_function(model_type='dt', worst_case=True)
+        print("\n** Evaluating Minimax Model - Worst Case **")
         for target in target_returns:
-            returns, _ = eval_fn_worst(model, target, num_episodes=num_episodes_per_target)
-            results['worst_case'][f'target_{target}'] = {
+            returns, _ = eval_fn_worst(minimax_model, target, num_episodes=num_episodes_per_target)
+            results['minimax_worst'][f'target_{target}'] = {
                 'mean': np.mean(returns),
                 'std': np.std(returns),
                 'returns': returns
             }
 
         # --- Save and Plot Results ---
-        self._save_results(results, save_path)
-        self._plot_results(results, target_returns, save_path)
+        self._save_results(results, save_path, method)
+        self._plot_comparison_results(results, target_returns, save_path, method)
         
-        print("\n** Dual evaluation complete. Results saved and plotted. **")
+        if self.env_name == "kuhn_poker":
+            self._plot_kuhn_poker_results(results, target_returns, save_path, method)
+        
+        print("\n** Minimax model evaluation complete. Results saved and plotted. **")
         
         return results
 
-    def _save_results(self, results: Dict, save_path: str):
+    def _save_results(self, results: Dict, save_path: str, method: str):
         """Saves evaluation results to a JSON file."""
         os.makedirs(save_path, exist_ok=True)
-        filename = Path(save_path) / 'dual_evaluation_results.json'
+        filename = Path(save_path) / f'{method}_evaluation_results.json'
         
         # Convert numpy types to native Python types for JSON serialization
         def convert_numpy(obj):
@@ -286,41 +462,86 @@ class ARDTEvaluator:
             json.dump(convert_numpy(results), f, indent=2)
         print(f"💾 Results saved to {filename}")
 
-    def _plot_results(self, results: Dict, target_returns: List[float], save_path: str):
+    def _plot_comparison_results(self, results: Dict, target_returns: List[float], save_path: str, method: str):
         """
-        Plots the results for both normal and worst-case scenarios with standard deviation.
+        Plots single comprehensive comparison for model across different scenarios.
         """
-        fig, ax = plt.subplots(figsize=(10, 6))
+        fig, ax = plt.subplots(figsize=(12, 8))
         
         target_returns = np.array(target_returns)
 
-        # Plot Normal Case
-        normal_means = np.array([results['normal'][f'target_{t}']['mean'] for t in target_returns])
-        normal_stds = np.array([results['normal'][f'target_{t}']['std'] for t in target_returns])
-        ax.plot(target_returns, normal_means, 'o-', color='green', label='Normal Case')
-        ax.fill_between(target_returns, normal_means - normal_stds, normal_means + normal_stds, color='green', alpha=0.2)
+        # Get data from results
+        minimax_normal_means = np.array([results['minimax_normal'][f'target_{t}']['mean'] for t in target_returns])
+        minimax_normal_stds = np.array([results['minimax_normal'][f'target_{t}']['std'] for t in target_returns])
+        minimax_worst_means = np.array([results['minimax_worst'][f'target_{t}']['mean'] for t in target_returns])
+        minimax_worst_stds = np.array([results['minimax_worst'][f'target_{t}']['std'] for t in target_returns])
 
-        # Plot Worst-Case
-        worst_means = np.array([results['worst_case'][f'target_{t}']['mean'] for t in target_returns])
-        worst_stds = np.array([results['worst_case'][f'target_{t}']['std'] for t in target_returns])
-        ax.plot(target_returns, worst_means, 'x-', color='red', label='Worst-Case')
-        ax.fill_between(target_returns, worst_means - worst_stds, worst_means + worst_stds, color='red', alpha=0.2)
+        ax.plot(target_returns, minimax_normal_means, 'o-', color='blue', label='Normal Case', linewidth=2, markersize=8)
+        ax.fill_between(target_returns, minimax_normal_means - minimax_normal_stds, 
+                        minimax_normal_means + minimax_normal_stds, color='blue', alpha=0.2)
         
-        # Plot ideal line
-        ax.plot(target_returns, target_returns, '--', color='gray', label='Ideal')
+        ax.plot(target_returns, minimax_worst_means, 'x-', color='red', label='Worst Case', linewidth=2, markersize=10)
+        ax.fill_between(target_returns, minimax_worst_means - minimax_worst_stds, 
+                        minimax_worst_means + minimax_worst_stds, color='red', alpha=0.2)
         
-        # Add labels, title, and legend
-        ax.set_xlabel("Target Return")
-        ax.set_ylabel("Achieved Mean Return")
-        ax.set_title("ARDT Performance: Normal vs. Worst-Case")
-        ax.legend()
-        ax.grid(True)
+        ax.plot(target_returns, target_returns, '--', color='gray', label='Ideal Performance', linewidth=2)
         
-        # Save and show the plot
-        plot_filename = Path(save_path) / 'dual_evaluation_plot.png'
-        plt.savefig(plot_filename)
+        ax.set_xlabel("Target Return", fontsize=14)
+        ax.set_ylabel("Achieved Mean Return", fontsize=14)
+        ax.set_title(f"{method.capitalize()} Model Performance: All Scenarios", fontsize=16, fontweight='bold')
+        ax.legend(fontsize=12)
+        ax.grid(True, alpha=0.3)
+        
+        # Enhance the plot appearance
+        ax.tick_params(axis='both', which='major', labelsize=12)
+        
+        plt.tight_layout()
+        
+        # Save the plot
+        plot_filename = Path(save_path) / f'{method}_evaluation_plot.png'
+        plt.savefig(plot_filename, dpi=300, bbox_inches='tight')
         print(f"🖼️ Plot saved to {plot_filename}")
         plt.show()
+
+    def _plot_kuhn_poker_results(self, results: Dict, target_returns: List[float], save_path: str, method: str):
+        """
+        Plots a single graph for Kuhn Poker comparing model performance to the Nash Equilibrium.
+        """
+        fig, ax = plt.subplots(figsize=(12, 8))
+        target_returns = np.array(target_returns)
+        
+        # Kuhn Poker Nash Equilibrium value for Player 1
+        NASH_EQUILIBRIUM_RETURN = -1/21  # Approximately -0.0476
+        
+        # Get data from results
+        minimax_normal_means = np.array([results['minimax_normal'][f'target_{t}']['mean'] for t in target_returns])
+        minimax_worst_means = np.array([results['minimax_worst'][f'target_{t}']['mean'] for t in target_returns])
+
+        # Plotting model performance
+        ax.plot(target_returns, minimax_normal_means, 'o-', color='blue', label=f'{method.capitalize()} Model (Normal Case)', linewidth=2)
+        ax.plot(target_returns, minimax_worst_means, 'x-', color='red', label=f'{method.capitalize()} Model (Worst Case)', linewidth=2)
+        
+        # Plotting the Nash Equilibrium line
+        ax.axhline(y=NASH_EQUILIBRIUM_RETURN, color='purple', linestyle='--', 
+                  label=f'Nash Equilibrium Return ({NASH_EQUILIBRIUM_RETURN:.4f})', linewidth=2)
+        
+        # Plotting the ideal performance line
+        ax.plot(target_returns, target_returns, '--', color='gray', label='Ideal Performance (Target = Achieved)', linewidth=2)
+
+        ax.set_xlabel("Target Return", fontsize=12)
+        ax.set_ylabel("Achieved Mean Return", fontsize=12)
+        ax.set_title(f"Kuhn Poker: {method.capitalize()} Model Performance vs. Nash Equilibrium", fontsize=14)
+        ax.legend(fontsize=10)
+        ax.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        
+        # Save the plot
+        plot_filename = Path(save_path) / f'kuhn_poker_{method}_results.png'
+        plt.savefig(plot_filename, dpi=300, bbox_inches='tight')
+        print(f"🖼️ Kuhn Poker specific plot saved to {plot_filename}")
+        plt.show()
+
 
 class ARDTValidator:
     """
@@ -414,14 +635,14 @@ class ARDTValidator:
         
         return results
     
-    def compare_models(self,
-                      ardt_model: torch.nn.Module,
-                      baseline_model: torch.nn.Module,
-                      eval_fn: Callable,
-                      target_returns: List[float] = None,
-                      num_episodes: int = 50) -> Dict:
-        """Compares the ARDT model's performance against a baseline model."""
-        print("📊 Comparing Models...")
+    def validate_scenario_performance(self,
+                                    model: torch.nn.Module,
+                                    eval_fn_normal: Callable,
+                                    eval_fn_worst: Callable,
+                                    target_returns: List[float] = None,
+                                    num_episodes: int = 50) -> Dict:
+        """Validates model performance across different scenarios."""
+        print("📊 Testing Scenario Performance...")
         
         target_returns = target_returns or [-1.0, 0.0, 1.0]
         improvements = []
@@ -430,121 +651,86 @@ class ARDTValidator:
         for target in target_returns:
             print(f"   Target: {target:.2f}")
             
-            ardt_returns, _ = eval_fn(ardt_model, target, num_episodes)
-            baseline_returns, _ = eval_fn(baseline_model, target, num_episodes)
+            normal_returns, _ = eval_fn_normal(model, target, num_episodes)
+            worst_returns, _ = eval_fn_worst(model, target, num_episodes)
             
-            ardt_mean = np.mean(ardt_returns)
-            baseline_mean = np.mean(baseline_returns)
-            improvement = ardt_mean - baseline_mean
+            normal_mean = np.mean(normal_returns)
+            worst_mean = np.mean(worst_returns)
+            
+            # Calculate robustness as the difference between normal and worst case
+            robustness = normal_mean - worst_mean
             
             results[f'target_{target}'] = {
-                'ardt_mean': float(ardt_mean),
-                'baseline_mean': float(baseline_mean),
-                'improvement': float(improvement)
+                'normal_mean': float(normal_mean),
+                'worst_mean': float(worst_mean),
+                'robustness': float(robustness)
             }
             
-            improvements.append(improvement)
-            print(f"     ARDT: {ardt_mean:.3f}, Baseline: {baseline_mean:.3f}")
-            print(f"     Improvement: {improvement:.3f}")
+            improvements.append(robustness)
+            print(f"     Normal: {normal_mean:.3f}, Worst: {worst_mean:.3f}")
+            print(f"     Robustness: {robustness:.3f}")
         
-        avg_improvement = np.mean(improvements)
-        passed = avg_improvement > 0.05
+        avg_robustness = np.mean([results[f'target_{t}']['robustness'] for t in target_returns])
+        passed = avg_robustness > 0.1  # Model should perform better in normal vs worst case
         
         results['summary'] = {
-            'avg_improvement': float(avg_improvement),
+            'avg_robustness': float(avg_robustness),
             'passed': bool(passed),
             'grade': 'PASS' if passed else 'FAIL'
         }
         
-        print(f"   📈 Avg Improvement: {avg_improvement:.3f}")
+        print(f"   📈 Avg Robustness: {avg_robustness:.3f}")
         print(f"   📈 Result: {results['summary']['grade']}")
         
         return results
     
-    def run_validation(
+    def run_comprehensive_validation(
         self,
-        ardt_model: torch.nn.Module,
-        dt_eval_fn: Callable,
-        baseline_model: Optional[torch.nn.Module],
-        bc_eval_fn: Optional[Callable],
+        minimax_model: torch.nn.Module,
+        eval_fn_normal: Callable,
+        eval_fn_worst: Callable,
         target_returns: List[float],
-        num_episodes: int
+        num_episodes: int = 50
     ) -> Dict:
         """
-        Runs the validation for both ARDT and baseline models.
+        Runs comprehensive validation for minimax model across different scenarios.
         """
-        print(f"🚀 Running validation for {self.device} device...")
+        print(f"🚀 Running comprehensive validation for minimax model...")
+        print("=" * 60)
          
-        results = {'dt': {}, 'bc': {}}
-        
-        for target_return in target_returns:
-            print(f"\n--- Evaluating ARDT Model with target_return: {target_return} ---")
-            dt_returns, dt_actions = dt_eval_fn(ardt_model, target_return, num_episodes)
-
-            results['dt'][f'target_return_{target_return}'] = {
-                'returns': np.mean(dt_returns),
-                'std': np.std(dt_returns)
-            }
-            
-            if baseline_model and bc_eval_fn:
-                print(f"\n--- Evaluating Baseline (BC) Model with target_return: {target_return} ---")
-                bc_returns, bc_actions = bc_eval_fn(baseline_model, target_return, num_episodes)
-                results['bc'][f'target_return_{target_return}'] = {
-                    'returns': np.mean(bc_returns),
-                    'std': np.std(bc_returns)
-                }
-        
-        return results
-    
-    def _generate_summary(self, test_results: Dict) -> Dict:
-        """Generates a summary of all test results."""
-        passed_tests = sum(
-            1 for test_result in test_results.values()
-            if test_result.get('passed', False) or test_result.get('summary', {}).get('passed', False)
-        )
-        total_tests = len(test_results)
-        success_rate = passed_tests / total_tests if total_tests > 0 else 0
-        
-        print(f"   ✅ Tests Passed: {passed_tests}/{total_tests}")
-        print(f"   📊 Success Rate: {success_rate:.1%}")
-
-        if success_rate >= 0.8:
-            grade, emoji = "EXCELLENT", "🎉"
-        elif success_rate >= 0.6:
-            grade, emoji = "GOOD", "✅"
-        elif success_rate >= 0.4:
-            grade, emoji = "FAIR", "⚠️"
-        else:
-            grade, emoji = "POOR", "❌"
-            
-        print(f"   {emoji} Grade: {grade}")
-        
-        return {
-            'passed_tests': passed_tests,
-            'total_tests': total_tests,
-            'success_rate': success_rate,
-            'grade': grade,
-            'overall_passed': success_rate >= 0.6
+        results = {
+            'normal_case': {},
+            'worst_case': {},
+            'scenario_comparison': {}
         }
-
-    def _save_results(self, results: Dict):
-        """Saves the validation results to a JSON file."""
-        results_dir = Path('ardt_validation_results')
-        results_dir.mkdir(exist_ok=True)
         
-        def convert_numpy(obj):
-            if isinstance(obj, np.ndarray):
-                return obj.tolist()
-            if isinstance(obj, (np.floating, np.integer, bool)):
-                return obj.item()
-            if isinstance(obj, dict):
-                return {k: convert_numpy(v) for k, v in obj.items()}
-            if isinstance(obj, list):
-                return [convert_numpy(item) for item in obj]
-            return obj
+        # Test return conditioning for each scenario
+        print("\n--- Testing Minimax Model (Normal Case) ---")
+        results['normal_case']['return_conditioning'] = self.validate_return_conditioning(
+            minimax_model, eval_fn_normal, target_returns, num_episodes
+        )
         
-        filename = results_dir / 'validation_results.json'
-        with open(filename, 'w') as f:
-            json.dump(convert_numpy(results), f, indent=2)
+        print("\n--- Testing Minimax Model (Worst Case) ---")
+        results['worst_case']['return_conditioning'] = self.validate_return_conditioning(
+            minimax_model, eval_fn_worst, target_returns, num_episodes
+        )
         
-        print(f"\n💾 Results saved to: {filename}")
+        # Test robustness for each scenario
+        print("\n--- Testing Robustness (Normal Case) ---")
+        results['normal_case']['robustness'] = self.validate_robustness(
+            minimax_model, eval_fn_normal, 0.0, num_episodes
+        )
+        
+        print("\n--- Testing Robustness (Worst Case) ---")
+        results['worst_case']['robustness'] = self.validate_robustness(
+            minimax_model, eval_fn_worst, 0.0, num_episodes
+        )
+        
+        # Compare performance across scenarios
+        print("\n--- Comparing Scenarios ---")
+        results['scenario_comparison'] = self.validate_scenario_performance(
+            minimax_model, eval_fn_normal, eval_fn_worst, target_returns, num_episodes
+        )
+        
+        print("\n✨ Comprehensive validation complete.")
+        return results

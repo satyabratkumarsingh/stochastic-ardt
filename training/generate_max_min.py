@@ -35,7 +35,7 @@ def generate_maxmin(
         config: dict,
         device: str,
         n_cpu: int,
-        is_simple_model: bool = False,
+        is_simple_model: bool = True,
         is_toy: bool = False
     ):
 

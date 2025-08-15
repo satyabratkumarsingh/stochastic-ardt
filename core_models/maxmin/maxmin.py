@@ -26,13 +26,21 @@ def evaluate_models(R_max_model, R_min_model, dataloader, device):
     """Evaluate R_max and R_min on one batch and print mean predictions + gap."""
     with torch.no_grad():
         obs, acts, adv_acts, ret, seq_len = next(iter(dataloader))
-        obs = obs.to(device)
-        acts = acts.to(device)
-        adv_acts = adv_acts.to(device)
-        ret = ret.to(device)  # No scaling
+        obs = obs.to(device).float()
+        acts = acts.to(device).float()
+        adv_acts = adv_acts.to(device).float()
+        ret = ret.to(device).float()  # No scaling
 
-        pred_max = R_max_model(obs, acts).mean().item()
-        pred_min = R_min_model(obs, acts, adv_acts).mean().item()
+        # Get the Q-value for the protagonist's action using torch.gather
+        act_indices = torch.argmax(acts, dim=-1, keepdim=True)
+        pred_max_full = R_max_model(obs, acts)
+        pred_max = torch.gather(pred_max_full, dim=-1, index=act_indices).mean().item()
+
+        # Get the Q-value for the adversary's action using torch.gather
+        adv_act_indices = torch.argmax(adv_acts, dim=-1, keepdim=True)
+        pred_min_full = R_min_model(obs, acts, adv_acts)
+        pred_min = torch.gather(pred_min_full, dim=-1, index=adv_act_indices).mean().item()
+        
         true_mean = ret.mean().item()
 
     gap = pred_max - pred_min
@@ -49,19 +57,24 @@ def ardt_minimax_expectile_regression(
     action_size: int,
     adv_action_size: int,
     train_args: dict,
-    device: str
+    device: str,
+    is_simple_model = True
 ) -> tuple[torch.nn.Module, torch.nn.Module]:
 
     # Models
-    R_max_model = RtgLSTM(obs_size, action_size, adv_action_size, train_args, include_adv=False).to(device)
-    R_min_model = RtgLSTM(obs_size, action_size, adv_action_size, train_args, include_adv=True).to(device)
+    if is_simple_model:
+        R_max_model = RtgFFN(obs_size, action_size, adv_action_size, include_adv=False).to(device)
+        R_min_model = RtgFFN(obs_size, action_size, adv_action_size, include_adv=True).to(device)
+    else:
+        R_max_model = RtgLSTM(obs_size, action_size, adv_action_size, train_args, include_adv=False).to(device)
+        R_min_model = RtgLSTM(obs_size, action_size, adv_action_size, train_args, include_adv=True).to(device)
 
     max_optimizer = torch.optim.AdamW(R_max_model.parameters(), lr=train_args['model_lr'])
     min_optimizer = torch.optim.AdamW(R_min_model.parameters(), lr=train_args['model_lr'])
 
-    # Dataset
+    # Dataset: Set act_type to 'discrete' for one-hot encoded actions
     max_len = max([len(traj.obs) for traj in trajs]) + 1
-    dataset = ARDTDataset(trajs, max_len, gamma=train_args['gamma'], act_type='continuous')
+    dataset = ARDTDataset(trajs, max_len, gamma=train_args['gamma'], act_type='discrete')
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=train_args['batch_size'])
 
     alpha_max = 0.01
@@ -92,16 +105,22 @@ def ardt_minimax_expectile_regression(
             ret = ret.to(device)  # No scaling
             timestep_mask = torch.arange(obs_len, device=device)[None, :] < seq_len[:, None]
             
+            # Use argmax and gather to get predictions for the actions taken
+            act_indices = torch.argmax(acts, dim=-1, keepdim=True)
+            adv_act_indices = torch.argmax(adv_acts, dim=-1, keepdim=True)
+            
             # R_max
             max_optimizer.zero_grad()
-            max_pred = R_max_model(obs, acts).view(batch_size, obs_len)
+            max_pred_all = R_max_model(obs, acts)
+            max_pred = torch.gather(max_pred_all, dim=-1, index=act_indices).squeeze(-1)
             max_loss = (((max_pred - ret) ** 2) * timestep_mask).sum() / timestep_mask.sum()
             max_loss.backward()
             max_optimizer.step()
 
             # R_min
             min_optimizer.zero_grad()
-            min_pred = R_min_model(obs, acts, adv_acts).view(batch_size, obs_len)
+            min_pred_all = R_min_model(obs, acts, adv_acts)
+            min_pred = torch.gather(min_pred_all, dim=-1, index=adv_act_indices).squeeze(-1)
             min_loss = (((min_pred - ret) ** 2) * timestep_mask).sum() / timestep_mask.sum()
             min_loss.backward()
             min_optimizer.step()
@@ -144,12 +163,18 @@ def ardt_minimax_expectile_regression(
                 max_optimizer.zero_grad()
                 
                 if obs_len > 1 and transition_mask.sum() > 0:
-                    max_pred_all = R_max_model(obs, acts).view(batch_size, obs_len)
+                    # Use argmax and gather to get Q-values for actions taken
+                    act_indices = torch.argmax(acts, dim=-1, keepdim=True)
+                    adv_act_indices_next = torch.argmax(adv_acts[:, 1:], dim=-1, keepdim=True)
+
+                    max_pred_all_tensor = R_max_model(obs, acts)
+                    max_pred_all = torch.gather(max_pred_all_tensor, dim=-1, index=act_indices).squeeze(-1)
                     max_pred_transitions = max_pred_all[:, :-1]
                     
                     # R_max maximizes against R_min's future predictions
                     with torch.no_grad():
-                        min_next = R_min_model(obs[:, 1:], acts[:, 1:], adv_acts[:, 1:]).view(batch_size, obs_len - 1)
+                        min_next_full = R_min_model(obs[:, 1:], acts[:, 1:], adv_acts[:, 1:])
+                        min_next = torch.gather(min_next_full, dim=-1, index=adv_act_indices_next).squeeze(-1)
                         targets = immediate_rewards + gamma * min_next
                     
                     max_loss = (expectile_loss(max_pred_transitions - targets, alpha_max) * transition_mask).sum() / transition_mask.sum()
@@ -168,12 +193,18 @@ def ardt_minimax_expectile_regression(
                 min_optimizer.zero_grad()
                 
                 if obs_len > 1 and transition_mask.sum() > 0:
-                    min_pred_all = R_min_model(obs, acts, adv_acts).view(batch_size, obs_len)
+                    # Use argmax and gather to get Q-values for actions taken
+                    adv_act_indices = torch.argmax(adv_acts, dim=-1, keepdim=True)
+                    act_indices_next = torch.argmax(acts[:, 1:], dim=-1, keepdim=True)
+
+                    min_pred_all_tensor = R_min_model(obs, acts, adv_acts)
+                    min_pred_all = torch.gather(min_pred_all_tensor, dim=-1, index=adv_act_indices).squeeze(-1)
                     min_pred_transitions = min_pred_all[:, :-1]
                     
                     # R_min minimizes against R_max's future predictions
                     with torch.no_grad():
-                        max_next = R_max_model(obs[:, 1:], acts[:, 1:]).view(batch_size, obs_len - 1)
+                        max_next_full = R_max_model(obs[:, 1:], acts[:, 1:])
+                        max_next = torch.gather(max_next_full, dim=-1, index=act_indices_next).squeeze(-1)
                         targets = immediate_rewards + gamma * max_next
                     
                     min_expectile_loss = (expectile_loss(min_pred_transitions - targets, alpha_min) * transition_mask).sum() / transition_mask.sum()
@@ -183,6 +214,7 @@ def ardt_minimax_expectile_regression(
                     valid_terminals = (seq_len > 0) & (seq_len <= obs_len)
                     if valid_terminals.sum() > 0:
                         terminal_seq_len = (seq_len[valid_terminals] - 1).clamp(0, obs_len - 1)
+                        # Use min_pred_all for the leaf loss
                         leaf_loss = ((min_pred_all[valid_terminals, terminal_seq_len] - 
                                     ret[valid_terminals, terminal_seq_len]) ** 2).mean()
                     else:
@@ -214,7 +246,7 @@ def maxmin(
     train_args: dict,
     device: str,
     n_cpu: int,
-    is_simple_model: bool = False,
+    is_simple_model: bool = True,
     is_toy: bool = False,
     is_discretize: bool = False,
 ) -> tuple[np.ndarray, float]:
@@ -246,7 +278,7 @@ def maxmin(
     # STEP 1: Minimax Expectile Regression (Core ARDT contribution)
     print("\n=== Step 1: Minimax Expectile Regression ===")
     R_max_model, R_min_model = ardt_minimax_expectile_regression(
-        trajs, obs_size, action_size, adv_action_size, train_args, device
+        trajs, obs_size, action_size, adv_action_size, train_args, device, is_simple_model
     )
     
     # STEP 2: Trajectory Relabeling with Minimax Returns-to-Go
@@ -260,35 +292,28 @@ def maxmin(
         for i, traj in enumerate(tqdm(trajs, desc="Relabeling trajectories")):
             # Prepare trajectory data
             obs = torch.from_numpy(np.array(traj.obs)).float().to(device).view(1, -1, obs_size)
-            acts = torch.from_numpy(np.array(traj.actions)).to(device).view(1, -1)
-            adv_acts = torch.from_numpy(np.array(traj.adv_actions)).to(device).view(1, -1)
+            acts = torch.from_numpy(np.array(traj.actions)).to(device).float().view(1, -1, action_size)
+            adv_acts = torch.from_numpy(np.array(traj.adv_actions)).to(device).float().view(1, -1, adv_action_size)
             
-            if action_type == "discrete" and not is_discretize:
-                acts = acts.float().view(1, -1, action_size)
-                adv_acts = adv_acts.float().view(1, -1, adv_action_size)
-            else:
-                acts = acts.view(1, -1, action_size)
-                adv_acts = adv_acts.view(1, -1, adv_action_size)
-            
-            # Get minimax return predictions (no scaling)
-            minimax_returns = R_max_model(obs, acts.float()).squeeze().cpu().numpy()
+            # Get minimax return predictions for the expert's actions
+            returns_full = R_max_model(obs, acts)
+            act_indices = torch.argmax(acts, dim=-1, keepdim=True)
+            minimax_returns = torch.gather(returns_full, dim=-1, index=act_indices).squeeze(-1).squeeze(0).cpu().numpy()
             
             # Create new trajectory with relabeled returns-to-go
             relabeled_traj = deepcopy(traj)
             
             # Replace returns-to-go with minimax estimates
-            new_returns_to_go = []
-            for t in range(len(traj.obs)):
-                new_returns_to_go.append(minimax_returns[t])
-            
-            # Store relabeled trajectory
-            relabeled_traj.minimax_returns_to_go = new_returns_to_go 
+            relabeled_traj.minimax_returns_to_go = minimax_returns
             relabeled_trajs.append(relabeled_traj)
     
     print(f"Relabeled {len(relabeled_trajs)} trajectories with minimax returns-to-go")
-    initial_minimax_returns_all = [t.minimax_returns_to_go[0] for t in relabeled_trajs 
-                                   if hasattr(t, 'minimax_returns_to_go') and t.minimax_returns_to_go 
-                                   and len(t.minimax_returns_to_go) > 0]
+    initial_minimax_returns_all = [
+                t.minimax_returns_to_go[0] for t in relabeled_trajs 
+                if hasattr(t, 'minimax_returns_to_go') and 
+                t.minimax_returns_to_go is not None and 
+                len(t.minimax_returns_to_go) > 0
+            ]
 
     if initial_minimax_returns_all:
         prompt_value = np.max(initial_minimax_returns_all)

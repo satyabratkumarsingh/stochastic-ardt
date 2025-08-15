@@ -8,8 +8,8 @@ import torch
 import pickle
 from offline_setup.toy_env import ToyOfflineEnv
 from training.generate_max_min import generate_maxmin
-from training.post_max_min_training import train_dt_baseline
-from evaluation.model_evaluator import ModelEvaluator
+from training.post_max_min_training import train_dt_models
+from evaluation.evaluate_models import load_and_evaluate_models, quick_model_comparison
 
 MUJOCO_TARGETS_DICT = {'halfcheetah': [2000, 3000], 'hopper': [500, 1000], 'walker2d': [800, 1000]}
 
@@ -117,7 +117,7 @@ if __name__ == '__main__':
     
         #offline_trajs = get_trajectory_for_offline("kuhn_poker_cfr_expert_vs_random_results.json")
         print(f"======== Loading offline file {variant['offline_file']}")
-        task = ToyOfflineEnv(variant['offline_file'])
+        task = ToyOfflineEnv(game=variant['game_name'], path= variant['offline_file'])
         env = task.env_cls()
         trajs = task.trajs
         print("==============")
@@ -140,26 +140,26 @@ if __name__ == '__main__':
             variant['config'], 
             variant['device'], 
             variant['n_cpu'], 
-            is_simple_model=variant['is_simple_maxmin_model'],
+            is_simple_model=True,
             is_toy=(variant['env_name'] == 'toy')
         )
-        dt_model = train_dt_baseline(seed=variant['seed'], 
-                        game_name= variant['game_name'],
-                        method= variant['method'],
-                        dt_train_args= variant['config'],
-                        n_cpu= variant['n_cpu'],
-                        device=variant['device']
-                       )
-        
-       
-        evaluator = ModelEvaluator(
-        seed=variant['seed'], 
-        game_name=variant['game_name'],
-        config_path=variant['config'],
-        device='cpu',
-        dt_model = dt_model
+        train_dt_models(seed=variant['seed'], 
+            game_name= variant['game_name'],
+            method= variant['method'],
+            dt_train_args= variant['config'],
+            n_cpu= variant['n_cpu'],
+            device=variant['device']
         )
-    
-        # Run the full evaluation
-        results = evaluator.evaluate_models(env_instance=env, method= variant['method'], num_episodes=10000)
-        print(results)
+
+        load_and_evaluate_models(seed=variant['seed'], 
+                                game_name= variant['game_name'],
+                                method= variant['method'],
+                                config_path=variant['config'], 
+                                env_instance=env,
+                                device=variant['device']
+                                )
+        quick_model_comparison(seed=variant['seed'], game_name= variant['game_name'],
+                                method= variant['method'],
+                                config_path=variant['config'], 
+                                env_instance=env,
+                                device=variant['device'])
