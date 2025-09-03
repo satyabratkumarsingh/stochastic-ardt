@@ -20,7 +20,9 @@ def train_dt_models(seed, game_name, method, dt_train_args, n_cpu = 1, device = 
 
     dt_trainer = DecisionTransformerTrainer(seed, game_name, dt_train_args, n_cpu , device)
     trajectories, prompt_value = get_relabeled_trajectories(seed, game_name, method)
-    both_models =  dt_trainer.train_and_save_both(trajectories, method = method)
+    all_rtg = [traj.minimax_returns_to_go for traj in trajectories]
+    print(f"RTG range: {min(all_rtg)} to {max(all_rtg)}")
+    both_models =  dt_trainer.train_and_save(trajectories, method = method)
     print("==========Both decision transformer models trained successfully ============")
     return both_models
 

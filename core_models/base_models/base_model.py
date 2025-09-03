@@ -2,7 +2,22 @@ import torch
 
 from core_models.base_models.mlp import MLP
 
+
 class RtgFFN(torch.nn.Module):
+    """
+    The RtgFFN (Return-to-Go Feed-Forward Network) is a neural network model designed to predict 
+    return-to-go (RTG) values based on the current state and past actions.
+
+    The model consists of separate embedding layers for the action, adversarial action (if applicable), 
+    and observation (state). These embeddings are concatenated and passed through a feed-forward network 
+    (`rtg_net`) to output a single RTG prediction.
+
+    Key Features:
+    - `act_embed`: Embeds the previous action.
+    - `adv_act_embed`: Embeds the adversarial action (optional).
+    - `obs_embed`: Embeds the current state/observation.
+    - `rtg_net`: Predicts the return-to-go based on the concatenated embeddings.
+    """
     def __init__(
         self,
         state_dim: int,
@@ -16,7 +31,6 @@ class RtgFFN(torch.nn.Module):
         self.act_dim = action_dim
         self.adv_action_dim = adv_action_dim
         self.include_adv = include_adv
-        self.hidden_dim = hidden_dim
 
         self.act_embed = torch.nn.Sequential(
             torch.nn.Linear(self.act_dim, hidden_dim), torch.nn.ReLU(),
@@ -33,54 +47,50 @@ class RtgFFN(torch.nn.Module):
         if include_adv:
             self.rtg_net = torch.nn.Sequential(
                 torch.nn.Linear(3 * hidden_dim, hidden_dim), torch.nn.ReLU(),
-                torch.nn.Linear(hidden_dim, adv_action_dim)
+                torch.nn.Linear(hidden_dim, 1)
             )
         else:
-            # FIX: Change the final layer's output dimension to 1
             self.rtg_net = torch.nn.Sequential(
                 torch.nn.Linear(2 * hidden_dim, hidden_dim), torch.nn.ReLU(),
-                torch.nn.Linear(hidden_dim, 1)  # Predicts a single Q-value
+                torch.nn.Linear(hidden_dim, 1)
             )
 
-    def forward(self, observation: torch.Tensor, pr_action, adv_action=None):
-        batch_size, seq_len = observation.shape[:2]
-        obs_emd = self.obs_embed(observation)
-        
+    def forward(self, observation: torch.Tensor, pr_action, adv_action=None): 
         if not self.include_adv:
-            # The rest of the logic is correct assuming the output of rtg_net is of size 1.
-            act_all = torch.eye(self.act_dim, device=observation.device)
-            act_all = act_all.view(1, 1, self.act_dim, self.act_dim).expand(batch_size, seq_len, -1, -1)
-            act_all = act_all.reshape(batch_size * seq_len * self.act_dim, self.act_dim)
-            
-            act_emd = self.act_embed(act_all)
-            obs_emd_expanded = obs_emd.unsqueeze(2).expand(-1, -1, self.act_dim, -1).reshape(batch_size * seq_len * self.act_dim, self.hidden_dim)
-            
-            # The output of this is now of shape (batch*seq_len*act_dim, 1) -> (768, 1)
-            q = self.rtg_net(torch.cat([obs_emd_expanded, act_emd], dim=-1))
-            
-            # Reshape to (batch, seq_len, act_dim) -> (128, 3, 2) which is now valid
-            return q.reshape(batch_size, seq_len, self.act_dim)
+            act_emd, obs_emd = self.act_embed(pr_action), self.obs_embed(observation)
+            return self.rtg_net(torch.cat([obs_emd, act_emd], dim=-1))
         else:
-            act_emd = self.act_embed(pr_action)
-            adv_emd = self.adv_act_embed(adv_action)
+            act_emd, obs_emd, adv_emd = self.act_embed(pr_action), self.obs_embed(observation), self.adv_act_embed(adv_action)
             return self.rtg_net(torch.cat([obs_emd, act_emd, adv_emd], dim=-1))
-        
+ 
+ 
 class RtgLSTM(torch.nn.Module):
+    """
+    The RtgLSTM (Return-to-Go Long Short-Term Memory) is a model designed to predict return-to-go (RTG) values 
+    in a sequential decision-making setting. This model utilizes an LSTM to capture temporal dependencies in the data.
+    
+    Key Features:
+    - If `is_lstm` is set to `True`, it uses an LSTM to model sequential data and predict RTG values. Otherwise, it uses an MLP.
+    - For LSTM-based modeling, the representations are processed through an LSTM to capture temporal patterns, 
+    followed by a final linear layer to predict the RTG values.
+    - If `is_lstm` is `False`, the MLP directly predicts RTG values based on the processed inputs.
+
+    This design allows the model to handle both sequential data with temporal dependencies (via LSTM) and simpler cases 
+    (via MLP), making it flexible for different types of return prediction tasks.
+    """
     def __init__(
-        self, 
-        state_dim: int,
-        action_dim: int,
-        adv_action_dim: int, 
-        model_args: dict, 
-        hidden_dim: int = 64, 
-        include_adv: bool = False, 
-        is_lstm: bool = True
-    ):
+            self, 
+            state_dim: int,
+            action_dim: int,
+            adv_action_dim: int, 
+            model_args: dict, 
+            hidden_dim: int = 64, 
+            include_adv: bool = False, 
+            is_lstm: bool = True
+        ) -> None:
         super().__init__()
         self.include_adv = include_adv
         self.is_lstm = is_lstm
-        self.action_dim = action_dim
-        self.adv_action_dim = adv_action_dim
 
         hidden_dim = model_args['ret_obs_act_model_args']['hidden_size']
         self.hidden_dim = hidden_dim
@@ -89,53 +99,37 @@ class RtgLSTM(torch.nn.Module):
         self.ret_obs_act_model = MLP(input_dim, hidden_dim, **model_args['ret_obs_act_model_args'])
         
         if is_lstm:
-            self.lstm_model = torch.nn.LSTM(hidden_dim, hidden_dim, batch_first=True)
-            self.ret_model = torch.nn.Linear(hidden_dim, adv_action_dim if include_adv else action_dim)
+            self.lstm_model = torch.nn.LSTM(hidden_dim, hidden_dim,batch_first=True)
+            self.ret_model = torch.nn.Linear(hidden_dim, 1)
         else:
-            self.ret_model = MLP(hidden_dim, adv_action_dim if include_adv else action_dim, **model_args['ret_model_args'])
+            self.ret_model = MLP(hidden_dim, 1, **model_args['ret_model_args'])
 
-    def forward(self, obs: torch.Tensor, action: torch.Tensor, adv_action: torch.Tensor | None = None):
+    def forward(
+            self, 
+            obs: torch.Tensor, 
+            action: torch.Tensor, 
+            adv_action: torch.Tensor | None = None
+        ):
+        # Concatenate observations and actions for recurrence
         batch_size, seq_len = obs.shape[:2]
-        
         if self.include_adv:
             x = torch.cat([obs, action, adv_action], dim=-1).view(batch_size * seq_len, -1)
-            ret_obs_act_reps = self.ret_obs_act_model(x).view(batch_size, seq_len, -1)
         else:
-            act_all = torch.eye(self.action_dim, device=obs.device).view(1, 1, self.action_dim, -1)
-            act_all = act_all.expand(batch_size, seq_len, -1, -1).reshape(batch_size * seq_len * self.action_dim, self.action_dim)
-            obs_expanded = obs.unsqueeze(2).expand(-1, -1, self.action_dim, -1).reshape(batch_size * seq_len * self.action_dim, -1)
-            
-            x = torch.cat([obs_expanded, act_all], dim=-1)
-            ret_obs_act_reps = self.ret_obs_act_model(x)
-            
+            x = torch.cat([obs, action], dim=-1).view(batch_size * seq_len, -1)
+        
+        ret_obs_act_reps = self.ret_obs_act_model(x).view(batch_size, seq_len, -1)
         if self.is_lstm:
-            if self.include_adv:
-                hidden = (
-                    torch.zeros(1, batch_size, self.hidden_dim).to(obs.device), 
-                    torch.zeros(1, batch_size, self.hidden_dim).to(obs.device)
-                )
-                x, _ = self.lstm_model(ret_obs_act_reps, hidden)
-                ret_pred = self.ret_model(x)
-            else:
-                # Correctly reshape and permute for LSTM processing
-                x = ret_obs_act_reps.reshape(batch_size, seq_len, self.action_dim, -1)
-                x = x.permute(0, 2, 1, 3)
-                x = x.reshape(batch_size * self.action_dim, seq_len, -1)
-                
-                # Correctly initialize hidden state for the new batch size
-                hidden = (
-                    torch.zeros(1, batch_size * self.action_dim, self.hidden_dim).to(obs.device),
-                    torch.zeros(1, batch_size * self.action_dim, self.hidden_dim).to(obs.device)
-                )
+            # Use LSTM to get the representations for each suffix of the sequence
+            hidden = (
+                torch.zeros(1, batch_size, self.hidden_dim).to(x.device), 
+                torch.zeros(1, batch_size, self.hidden_dim).to(x.device)
+            )
+            x, _ = self.lstm_model(ret_obs_act_reps, hidden)
 
-                x, _ = self.lstm_model(x, hidden)
-                
-                # Reshape output back to original dimensions
-                x = x.reshape(batch_size, self.action_dim, seq_len, -1)
-                x = x.permute(0, 2, 1, 3)
-                ret_pred = self.ret_model(x)
-                ret_pred = ret_pred.squeeze(-1) # Squeeze the last dimension to get the final shape
+            # Reverse the sequence in time again and project through linear layer
+            ret_pred = self.ret_model(x.view(batch_size, seq_len, -1))
         else:
-            ret_pred = self.ret_model(ret_obs_act_reps)
+            # Pass through MLP to get return prediction
+            ret_pred = self.ret_model(ret_obs_act_reps).view(batch_size, seq_len, -1)
         
         return ret_pred

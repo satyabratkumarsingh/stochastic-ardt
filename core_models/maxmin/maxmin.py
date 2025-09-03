@@ -1,269 +1,294 @@
+
 import gym
 import numpy as np
 import torch
 import torch.nn.functional as F
 from tqdm.autonotebook import tqdm
-from copy import deepcopy
+
 from data_class.trajectory import Trajectory
 from core_models.base_models.base_model import RtgFFN, RtgLSTM
 from core_models.dataset.ardt_dataset import ARDTDataset
+from core_models.implicit_q.value_net import ValueNet
+from copy import deepcopy
+import numpy as np
+import torch
+from scipy.stats import entropy
+import pickle
+import pyspiel
+import gc
+import sys
+import atexit
+import json
+import os
 
-def expectile_loss(diff: torch.Tensor, alpha: float) -> torch.Tensor:
-    """
-    Expectile loss function as used in ARDT paper.
+# Add proper cleanup handling
+def cleanup_torch():
+    """Ensure proper cleanup of PyTorch resources"""
+    try:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
+    except:
+        pass
+
+# Register cleanup function
+atexit.register(cleanup_torch)
+
+def load_solver(file_path):
+    """Load a saved CFR solver from pickle file"""
+    with open(file_path, "rb") as f:
+        print(f"Loading expert solver from {file_path}")
+        return pickle.load(f)
+
+
+# Correct theoretical Nash equilibrium for Kuhn Poker
+# Format: [P(Pass), P(Bet), P(NoAction)] where NoAction is always 0
+KUHN_NASH_EQUILIBRIUM = {
+    # Player 1's first action (no history)
+    "0": [1.0, 0.0, 0.0],      # Jack: always pass
+    "1": [2/3, 1/3, 0.0],      # Queen: pass 2/3, bet 1/3  
+    "2": [0.0, 1.0, 0.0],      # King: always bet
     
-    Args:
-        diff: Prediction - target differences
-        alpha: Expectile level
-               - alpha < 0.5: Approximates maximum (optimistic)
-               - alpha > 0.5: Approximates minimum (pessimistic)
-    """
-    weight = torch.where(diff >= 0, alpha, 1 - alpha)
-    return weight * (diff ** 2)
+    # Player 2's response after Player 1 passes
+    "0p": [1.0, 0.0, 0.0],     # Jack: always pass (fold)
+    "1p": [1.0, 0.0, 0.0],     # Queen: always pass (check)
+    "2p": [0.0, 1.0, 0.0],     # King: always bet
+    
+    # Player 2's response after Player 1 bets  
+    "0b": [1.0, 0.0, 0.0],     # Jack: always pass (fold)
+    "1b": [2/3, 1/3, 0.0],     # Queen: call 1/3 of the time
+    "2b": [0.0, 1.0, 0.0],     # King: always call
+    
+    # Player 1's response after pass-bet sequence
+    "0pb": [1.0, 0.0, 0.0],    # Jack: always fold
+    "1pb": [2/3, 1/3, 0.0],    # Queen: fold 2/3, call 1/3  
+    "2pb": [0.0, 1.0, 0.0]     # King: always call
+}
 
-
-def evaluate_models(R_max_model, R_min_model, dataloader, device):
-    """Evaluate R_max and R_min on one batch and print mean predictions + gap."""
-    with torch.no_grad():
-        obs, acts, adv_acts, ret, seq_len = next(iter(dataloader))
-        obs = obs.to(device).float()
-        acts = acts.to(device).float()
-        adv_acts = adv_acts.to(device).float()
-        ret = ret.to(device).float()  # No scaling
-
-        # Get the Q-value for the protagonist's action using torch.gather
-        act_indices = torch.argmax(acts, dim=-1, keepdim=True)
-        pred_max_full = R_max_model(obs, acts)
-        pred_max = torch.gather(pred_max_full, dim=-1, index=act_indices).mean().item()
-
-        # Get the Q-value for the adversary's action using torch.gather
-        adv_act_indices = torch.argmax(adv_acts, dim=-1, keepdim=True)
-        pred_min_full = R_min_model(obs, acts, adv_acts)
-        pred_min = torch.gather(pred_min_full, dim=-1, index=adv_act_indices).mean().item()
-        
-        true_mean = ret.mean().item()
-
-    gap = pred_max - pred_min
-    symbol = "✅" if gap >= 0 else "❌"
-    print(f"   Eval -> True mean: {true_mean:.4f}, "
-      f"R_max mean: {pred_max:.4f}, R_min mean: {pred_min:.4f}, "
-      f"Gap: {gap:.4f} {symbol}")
-    return pred_max, pred_min, gap
-
-
-def ardt_minimax_expectile_regression(
-    trajs: list[Trajectory],
-    obs_size: int,
-    action_size: int,
-    adv_action_size: int,
-    train_args: dict,
-    device: str,
-    is_simple_model = True
-) -> tuple[torch.nn.Module, torch.nn.Module]:
-
-    # Models
-    if is_simple_model:
-        R_max_model = RtgFFN(obs_size, action_size, adv_action_size, include_adv=False).to(device)
-        R_min_model = RtgFFN(obs_size, action_size, adv_action_size, include_adv=True).to(device)
+def print_model_q_values(
+    epoch_id, qsa_pr_model, qsa_adv_model, device, stage_name, state_mapping,
+    cfr_solver=None, game=None, log_adv_matrix=True, save_path="epoch_stats_maxmin.json"
+):
+    print(f"\n=== {stage_name} ===")
+    
+    # Load existing data if file exists
+    if os.path.exists(save_path):
+        with open(save_path, "r") as f:
+            try:
+                all_stats = json.load(f)
+            except json.JSONDecodeError:
+                all_stats = {}
     else:
-        R_max_model = RtgLSTM(obs_size, action_size, adv_action_size, train_args, include_adv=False).to(device)
-        R_min_model = RtgLSTM(obs_size, action_size, adv_action_size, train_args, include_adv=True).to(device)
+        all_stats = {}
 
-    max_optimizer = torch.optim.AdamW(R_max_model.parameters(), lr=train_args['model_lr'])
-    min_optimizer = torch.optim.AdamW(R_min_model.parameters(), lr=train_args['model_lr'])
+    current_epoch_stats = {}
+    l1_devs = []
+    kl_devs = []
+    exploitability_scores = []
 
-    # Dataset: Set act_type to 'discrete' for one-hot encoded actions
-    max_len = max([len(traj.obs) for traj in trajs]) + 1
-    dataset = ARDTDataset(trajs, max_len, gamma=train_args['gamma'], act_type='discrete')
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=train_args['batch_size'])
-
-    alpha_max = 0.01
-    alpha_min = 0.99
+    canonical_states = ["0", "0p", "0b", "0pb",
+                        "1", "1p", "1b", "1pb", 
+                        "2", "2p", "2b", "2pb"]
     
-    warmup_epochs = train_args.get('warmup_epochs', 10)
-    minimax_epochs = train_args.get('minimax_epochs', 30)
-    gamma = train_args.get('gamma', 0.99)
-    leaf_weight = train_args.get('leaf_weight', 0.1)
+    actions = {"Pass": [1.0, 0.0, 0.0], "Bet": [0.0, 1.0, 0.0]}
+    card_names = {"0": "Jack", "1": "Queen", "2": "King"}
 
-    print("=== ARDT Minimax Expectile Regression ===")
-    print(f"Warmup epochs: {warmup_epochs}")
-    print(f"Minimax epochs: {minimax_epochs}")
-    print(f"Alpha_max (optimistic): {alpha_max}")
-    print(f"Alpha_min (pessimistic): {alpha_min}")
-    print("Using ALTERNATING updates during minimax phase")
-    print("NO SCALING - using raw return values")
+    qsa_pr_model.eval()
+    qsa_adv_model.eval() 
 
-    # ---- Warmup ----
-    for epoch in range(warmup_epochs):
-        total_max_loss, total_min_loss = 0, 0
-        num_batches = 0
-        for obs, acts, adv_acts, ret, seq_len in tqdm(dataloader, desc=f"Warmup Epoch {epoch}"):
-            batch_size, obs_len = obs.shape[0], obs.shape[1]
-            obs = obs.view(batch_size, obs_len, -1).to(device)
-            acts = acts.to(device)
-            adv_acts = adv_acts.to(device)
-            ret = ret.to(device)  # No scaling
-            timestep_mask = torch.arange(obs_len, device=device)[None, :] < seq_len[:, None]
-            
-            # Use argmax and gather to get predictions for the actions taken
-            act_indices = torch.argmax(acts, dim=-1, keepdim=True)
-            adv_act_indices = torch.argmax(adv_acts, dim=-1, keepdim=True)
-            
-            # R_max
-            max_optimizer.zero_grad()
-            max_pred_all = R_max_model(obs, acts)
-            max_pred = torch.gather(max_pred_all, dim=-1, index=act_indices).squeeze(-1)
-            max_loss = (((max_pred - ret) ** 2) * timestep_mask).sum() / timestep_mask.sum()
-            max_loss.backward()
-            max_optimizer.step()
+    with torch.no_grad():
+        for state_str in canonical_states:
+            if state_str not in state_mapping:
+                continue
 
-            # R_min
-            min_optimizer.zero_grad()
-            min_pred_all = R_min_model(obs, acts, adv_acts)
-            min_pred = torch.gather(min_pred_all, dim=-1, index=adv_act_indices).squeeze(-1)
-            min_loss = (((min_pred - ret) ** 2) * timestep_mask).sum() / timestep_mask.sum()
-            min_loss.backward()
-            min_optimizer.step()
-            
-            total_max_loss += max_loss.item()
-            total_min_loss += min_loss.item()
-            num_batches += 1
-        
-        print(f"Warmup Epoch {epoch}: Max Loss = {total_max_loss/num_batches:.6f}, Min Loss = {total_min_loss/num_batches:.6f}")
-        evaluate_models(R_max_model, R_min_model, dataloader, device)
+            obs_tensor = torch.tensor([state_mapping[state_str]], dtype=torch.float32, device=device).unsqueeze(1)
+            card_name = card_names[state_str[0]]
+            history = state_str[1:] if len(state_str) > 1 else "initial"
 
-    # ---- Minimax with Alternating Updates ----
-    for epoch in range(minimax_epochs):
-        total_max_loss, total_min_loss = 0, 0
-        num_batches = 0
-        
-        # Determine which model to update this epoch
-        update_max = (epoch % 2 == 0)
-        update_desc = "MAX" if update_max else "MIN"
+            # Get Q-values for both actions
+            pr_qs = {}
+            for action_name, act_vec in actions.items():
+                act_tensor = torch.tensor([[[act_vec[0], act_vec[1], act_vec[2]]]], dtype=torch.float32, device=device)
+                q_val = qsa_pr_model(obs_tensor, act_tensor)
+                pr_qs[action_name] = q_val.item()
 
-        for obs, acts, adv_acts, ret, seq_len in tqdm(dataloader, desc=f"Minimax Epoch {epoch} ({update_desc})"):
-            batch_size, obs_len = obs.shape[0], obs.shape[1]
-            obs = obs.view(batch_size, obs_len, -1).to(device)
-            acts = acts.to(device)
-            adv_acts = adv_acts.to(device)
-            ret = ret.to(device)  # No scaling
+            # Nash analysis
+            nash_str = ""
+            nash_probs = None
+            l1_deviation = None
+            kl_divergence = None
+            exploitability = None
             
-            # Mask for valid timesteps
-            timestep_mask = torch.arange(obs_len, device=device)[None, :] < seq_len[:, None]
-            
-            # Mask for valid transitions (all but the last timestep)
-            transition_mask = timestep_mask[:, :-1] & timestep_mask[:, 1:]
-            
-            # Immediate rewards for Bellman backup
-            if obs_len > 1:
-                immediate_rewards = ret[:, :-1] - gamma * ret[:, 1:]
-            
-            if update_max:
-                # --- R_max update (MAXIMIZE step) ---
-                max_optimizer.zero_grad()
+            if state_str in KUHN_NASH_EQUILIBRIUM:
+                nash_probs = KUHN_NASH_EQUILIBRIUM[state_str]
+                nash_str = f" | Nash: Pass={nash_probs[0]:.3f}, Bet={nash_probs[1]:.3f}"
                 
-                if obs_len > 1 and transition_mask.sum() > 0:
-                    # Use argmax and gather to get Q-values for actions taken
-                    act_indices = torch.argmax(acts, dim=-1, keepdim=True)
-                    adv_act_indices_next = torch.argmax(adv_acts[:, 1:], dim=-1, keepdim=True)
-
-                    max_pred_all_tensor = R_max_model(obs, acts)
-                    max_pred_all = torch.gather(max_pred_all_tensor, dim=-1, index=act_indices).squeeze(-1)
-                    max_pred_transitions = max_pred_all[:, :-1]
-                    
-                    # R_max maximizes against R_min's future predictions
-                    with torch.no_grad():
-                        min_next_full = R_min_model(obs[:, 1:], acts[:, 1:], adv_acts[:, 1:])
-                        min_next = torch.gather(min_next_full, dim=-1, index=adv_act_indices_next).squeeze(-1)
-                        targets = immediate_rewards + gamma * min_next
-                    
-                    max_loss = (expectile_loss(max_pred_transitions - targets, alpha_max) * transition_mask).sum() / transition_mask.sum()
-                else:
-                    max_loss = torch.tensor(0.0, device=device)
-
-                max_loss.backward()
-                torch.nn.utils.clip_grad_norm_(R_max_model.parameters(), max_norm=1.0)
-                max_optimizer.step()
+                # Compute learned policy using softmax with temperature
+                temperature = 1.0
+                q_values = np.array([pr_qs["Pass"], pr_qs["Bet"]])
                 
-                total_max_loss += max_loss.item()
-                total_min_loss += 0.0
+                # Softmax policy (what the model would actually play)
+                exp_q = np.exp(q_values / temperature)
+                learned_policy_2d = exp_q / np.sum(exp_q)
+                learned_policy_3d = np.array([learned_policy_2d[0], learned_policy_2d[1], 0.0])
                 
+                # Also compute greedy policy for comparison
+                greedy_policy_3d = np.zeros(3)
+                greedy_policy_3d[np.argmax(q_values)] = 1.0
+                
+                # L1 deviation between learned softmax policy and Nash
+                l1_deviation = float(np.sum(np.abs(learned_policy_3d - nash_probs)))
+                l1_devs.append(l1_deviation)
+                
+                # KL divergence from Nash to learned policy (use 2D versions)
+                eps = 1e-8
+                nash_2d = np.array(nash_probs[:2]) + eps
+                learned_2d = learned_policy_2d + eps
+                
+                # Normalize to ensure they sum to 1 (important for KL divergence)
+                nash_2d = nash_2d / np.sum(nash_2d)
+                learned_2d = learned_2d / np.sum(learned_2d)
+                
+                kl_divergence = float(np.sum(nash_2d * np.log(nash_2d / learned_2d)))
+                kl_devs.append(kl_divergence)
+                
+                # Exploitability: gain from best response vs Nash
+                nash_value = np.sum(nash_probs[:2] * q_values)
+                best_response_value = np.max(q_values)
+                exploitability = float(best_response_value - nash_value)
+                exploitability_scores.append(exploitability)
+                
+                # Concise output
+                print(f"{state_str:4s} ({card_name:5s}) | Q(Pass/Bet)={pr_qs['Pass']:.3f}/{pr_qs['Bet']:.3f} | "
+                      f"Nash={nash_probs[0]:.2f}/{nash_probs[1]:.2f} | "
+                      f"L1={l1_deviation:.3f} | Exploit={exploitability:.4f}")
+
             else:
-                # --- R_min update (MINIMIZE step) ---
-                min_optimizer.zero_grad()
-                
-                if obs_len > 1 and transition_mask.sum() > 0:
-                    # Use argmax and gather to get Q-values for actions taken
-                    adv_act_indices = torch.argmax(adv_acts, dim=-1, keepdim=True)
-                    act_indices_next = torch.argmax(acts[:, 1:], dim=-1, keepdim=True)
+                print(f"{state_str:4s} ({card_name:5s}) | Q(Pass/Bet)={pr_qs['Pass']:.3f}/{pr_qs['Bet']:.3f}")
 
-                    min_pred_all_tensor = R_min_model(obs, acts, adv_acts)
-                    min_pred_all = torch.gather(min_pred_all_tensor, dim=-1, index=adv_act_indices).squeeze(-1)
-                    min_pred_transitions = min_pred_all[:, :-1]
-                    
-                    # R_min minimizes against R_max's future predictions
-                    with torch.no_grad():
-                        max_next_full = R_max_model(obs[:, 1:], acts[:, 1:])
-                        max_next = torch.gather(max_next_full, dim=-1, index=act_indices_next).squeeze(-1)
-                        targets = immediate_rewards + gamma * max_next
-                    
-                    min_expectile_loss = (expectile_loss(min_pred_transitions - targets, alpha_min) * transition_mask).sum() / transition_mask.sum()
-                    
-                    # Terminal state regularization (leaf loss)
-                    terminal_indices = torch.arange(batch_size, device=device)
-                    valid_terminals = (seq_len > 0) & (seq_len <= obs_len)
-                    if valid_terminals.sum() > 0:
-                        terminal_seq_len = (seq_len[valid_terminals] - 1).clamp(0, obs_len - 1)
-                        # Use min_pred_all for the leaf loss
-                        leaf_loss = ((min_pred_all[valid_terminals, terminal_seq_len] - 
-                                    ret[valid_terminals, terminal_seq_len]) ** 2).mean()
-                    else:
-                        leaf_loss = torch.tensor(0.0, device=device)
-                    
-                    min_loss = (1 - leaf_weight) * min_expectile_loss + leaf_weight * leaf_loss
-                else:
-                    min_loss = torch.tensor(0.0, device=device)
-                
-                min_loss.backward()
-                torch.nn.utils.clip_grad_norm_(R_min_model.parameters(), max_norm=1.0)
-                min_optimizer.step()
-                
-                total_min_loss += min_loss.item()
-                total_max_loss += 0.0
+            # Compute adversary matrix but don't print unless specifically requested
+            adv_matrix = None
+            if log_adv_matrix:
+                adv_matrix = np.zeros((2, 2))
+                for i, pr_name in enumerate(["Pass", "Bet"]):
+                    for j, adv_name in enumerate(["Pass", "Bet"]):
+                        pr_action = actions[pr_name]
+                        adv_action = actions[adv_name]
+                        pr_tensor = torch.tensor([[[pr_action[0], pr_action[1], pr_action[2]]]], dtype=torch.float32, device=device)
+                        adv_tensor = torch.tensor([[[adv_action[0], adv_action[1], adv_action[2]]]], dtype=torch.float32, device=device)
+                        adv_matrix[i, j] = qsa_adv_model(obs_tensor, pr_tensor, adv_tensor).item()
 
-            num_batches += 1
 
-        print(f"Minimax Epoch {epoch} ({update_desc}): Max Loss = {total_max_loss/num_batches:.6f}, Min Loss = {total_min_loss/num_batches:.6f}")
-        evaluate_models(R_max_model, R_min_model, dataloader, device)
+            # Save stats for the current epoch
+            current_epoch_stats[state_str] = {
+                "card": card_name,
+                "history": history,
+                "protagonist_q": pr_qs,
+                "nash_probs": nash_probs,
+                "l1_deviation": l1_deviation,
+                "kl_divergence": kl_divergence,
+                "exploitability": exploitability,
+                "adv_matrix": adv_matrix.tolist() if adv_matrix is not None else None
+            }
 
-    return R_max_model, R_min_model
+    # Summary statistics for the current epoch
+    if l1_devs or kl_devs or exploitability_scores:
+        print(f"\n{'='*60}")
+        print(f"Nash Analysis: {stage_name}")
+        if l1_devs:
+            print(f"L1 Deviation:  Mean={np.mean(l1_devs):.3f}  Max={np.max(l1_devs):.3f}")
+        if kl_devs:
+            print(f"KL Divergence: Mean={np.mean(kl_devs):.3f}  Max={np.max(kl_devs):.3f}")
+        if exploitability_scores:
+            print(f"Exploitability:Mean={np.mean(exploitability_scores):.4f} Max={np.max(exploitability_scores):.4f}")
+        print(f"{'='*60}")
+    else:
+        print(f"\n=== {stage_name} Complete ===\n")
 
+    current_epoch_stats["summary"] = {
+        "mean_l1_deviation": float(np.mean(l1_devs)) if l1_devs else None,
+        "max_l1_deviation": float(np.max(l1_devs)) if l1_devs else None,
+        "mean_kl_divergence": float(np.mean(kl_devs)) if kl_devs else None,
+        "mean_exploitability": float(np.mean(exploitability_scores)) if exploitability_scores else None
+    }
+    
+    # Add the current epoch's data to the master dictionary
+    all_stats[f"epoch_{epoch_id}"] = current_epoch_stats
+
+    # Write the entire dictionary back to the same file
+    with open(save_path, "w") as f:
+        json.dump(all_stats, f, indent=2)
+    print(f"Saved epoch stats to {save_path}")
+
+
+def _expectile_fn(
+        td_error: torch.Tensor, 
+        acts_mask: torch.Tensor, 
+        alpha: float = 0.01, 
+        discount_weighted: bool = False
+    ) -> torch.Tensor:
+    """
+    Expectile loss function to focus on different quantiles of the TD-error distribution.
+
+    Args:
+        td_error (torch.Tensor): Temporal difference error.
+        acts_mask (torch.Tensor): Mask for invalid actions.
+        alpha (float, optional): Expectile quantile parameter (default is 0.01).
+        discount_weighted (bool, optional): If True, apply discount weighting.
+
+    Returns:
+        torch.Tensor: Computed expectile loss.
+    """
+    # Normalize and apply ReLU to the TD-error
+    batch_loss = torch.abs(alpha - F.normalize(F.relu(td_error), dim=-1))
+    
+    # Square the TD-error
+    batch_loss *= (td_error ** 2)
+
+    # Apply discount weighting if needed
+    if discount_weighted:
+        weights = 0.5 ** np.array(range(len(batch_loss)))[::-1]
+        return (
+            batch_loss[~acts_mask] * torch.from_numpy(weights).to(td_error.device)
+        ).mean()
+    else:
+        # Calculate expectile loss for valid actions
+        return (batch_loss.squeeze(-1) * ~acts_mask).mean()
+    
 
 def maxmin(
-    trajs: list[Trajectory],
-    action_space: gym.spaces,
-    adv_action_space: gym.spaces,
-    train_args: dict,
-    device: str,
-    n_cpu: int,
-    is_simple_model: bool = True,
-    is_toy: bool = False,
-    is_discretize: bool = False,
-) -> tuple[np.ndarray, float]:
-    
-    print("=== ARDT Training ===")
-    all_rewards = []
-    for traj in trajs:
-        episode_reward = np.sum(traj.rewards)
-        all_rewards.append(episode_reward)
-    
-    print(f"Dataset size: {len(trajs)} episodes")
-    print(f"Reward stats: mean={np.mean(all_rewards):.3f}, std={np.std(all_rewards):.3f}")
-    
-    # No scaling - work with raw values
-    print("========= Using NO SCALING - raw return values")
-    
-    # Setup action spaces
+        trajs: list[Trajectory],
+        action_space: gym.spaces,
+        adv_action_space: gym.spaces,
+        train_args: dict,
+        device: str,
+        n_cpu: int,
+        is_simple_model: bool = False,
+        is_toy: bool = False,
+        is_discretize: bool = False,
+        state_mapping = None
+    ) -> tuple[np.ndarray, float]:
+    """
+    Train a max-min adversarial reinforcement learning model to handle worst-case returns.
+
+    Args:
+        trajs (list[Trajectory]): List of trajectories.
+        action_space (gym.spaces.Space): The action space of the environment.
+        adv_action_space (gym.spaces.Space): Adversarial action space.
+        train_args (dict): Training arguments including epochs, learning rates, and batch size.
+        device (str): Device to run computations on ('cpu' or 'cuda').
+        n_cpu (int): Number of CPUs to use for data loading.
+        is_simple_model (bool, optional): Use a simpler model for testing (default is False).
+        is_toy (bool, optional): Whether the environment is a toy model (default is False).
+        is_discretize (bool, optional): Whether to discretize actions for certain environments (default is False).
+
+    Returns:
+        tuple: Learned return labels and highest returns-to-go (prompt value).
+    """
+    solver = load_solver("kuhn_poker_solver_cfr_plus.pkl")
+    game = pyspiel.load_game("kuhn_poker") if solver is not None else None
+
+    # Initialize state and action spaces
     if isinstance(action_space, gym.spaces.Discrete):
         obs_size = np.prod(trajs[0].obs[0].shape)
         action_size = action_space.n
@@ -274,53 +299,206 @@ def maxmin(
         action_size = action_space.shape[0]
         adv_action_size = adv_action_space.shape[0]
         action_type = 'continuous'
-    
-    # STEP 1: Minimax Expectile Regression (Core ARDT contribution)
-    print("\n=== Step 1: Minimax Expectile Regression ===")
-    R_max_model, R_min_model = ardt_minimax_expectile_regression(
-        trajs, obs_size, action_size, adv_action_size, train_args, device, is_simple_model
-    )
-    
-    # STEP 2: Trajectory Relabeling with Minimax Returns-to-Go
-    print("\n=== Step 2: Trajectory Relabeling ===")
-    relabeled_trajs = []
-    
-    R_max_model.eval()
-    R_min_model.eval()
-    
-    with torch.no_grad():
-        for i, traj in enumerate(tqdm(trajs, desc="Relabeling trajectories")):
-            # Prepare trajectory data
-            obs = torch.from_numpy(np.array(traj.obs)).float().to(device).view(1, -1, obs_size)
-            acts = torch.from_numpy(np.array(traj.actions)).to(device).float().view(1, -1, action_size)
-            adv_acts = torch.from_numpy(np.array(traj.adv_actions)).to(device).float().view(1, -1, adv_action_size)
-            
-            # Get minimax return predictions for the expert's actions
-            returns_full = R_max_model(obs, acts)
-            act_indices = torch.argmax(acts, dim=-1, keepdim=True)
-            minimax_returns = torch.gather(returns_full, dim=-1, index=act_indices).squeeze(-1).squeeze(0).cpu().numpy()
-            
-            # Create new trajectory with relabeled returns-to-go
-            relabeled_traj = deepcopy(traj)
-            
-            # Replace returns-to-go with minimax estimates
-            relabeled_traj.minimax_returns_to_go = minimax_returns
-            relabeled_trajs.append(relabeled_traj)
-    
-    print(f"Relabeled {len(relabeled_trajs)} trajectories with minimax returns-to-go")
-    initial_minimax_returns_all = [
-                t.minimax_returns_to_go[0] for t in relabeled_trajs 
-                if hasattr(t, 'minimax_returns_to_go') and 
-                t.minimax_returns_to_go is not None and 
-                len(t.minimax_returns_to_go) > 0
-            ]
 
-    if initial_minimax_returns_all:
-        prompt_value = np.max(initial_minimax_returns_all)
+    # Build dataset and dataloader for training
+    max_len = max([len(traj.obs) for traj in trajs]) + 1
+    gamma=train_args['gamma']
+    dataset = ARDTDataset(trajs, max_len, gamma=gamma, act_type=action_type, include_player_ids= True)
+
+    dataloader = torch.utils.data.DataLoader(
+        dataset, batch_size=train_args['batch_size'], num_workers=n_cpu
+    )
+
+    # Set up the models (MLP or LSTM-based) involved in the ARDT algorithm
+    print(f'Creating models... (simple={is_simple_model})')
+    if is_simple_model:
+        qsa_pr_model = RtgFFN(obs_size, action_size, include_adv=False).to(device)
+        qsa_adv_model = RtgFFN(obs_size, action_size, adv_action_size, include_adv=True).to(device)
     else:
-        prompt_value = 0.0
-    
-    # STEP 3: Decision Transformer Training
-    print("\n=== Step 3: Decision Transformer Training ===")
-    
-    return relabeled_trajs, prompt_value
+        qsa_pr_model = RtgLSTM(obs_size, action_size, adv_action_size, train_args, include_adv=False).to(device)
+        qsa_adv_model = RtgLSTM(obs_size, action_size, adv_action_size, train_args, include_adv=True).to(device)
+
+    qsa_pr_optimizer = torch.optim.AdamW(
+        qsa_pr_model.parameters(), lr=train_args['model_lr'], weight_decay=train_args['model_wd']
+    )
+    qsa_adv_optimizer = torch.optim.AdamW(
+        qsa_adv_model.parameters(), lr=train_args['model_lr'], weight_decay=train_args['model_wd']
+    )
+
+    # Start training and running the ARDT algorithm
+    mse_epochs = train_args.get('mse_epochs', 5)
+    maxmin_epochs = train_args.get('minimax_epochs', 15)
+    total_epochs = mse_epochs + maxmin_epochs
+    assert maxmin_epochs % 2 == 0
+
+    print('Training...')
+    qsa_pr_model.train()
+    qsa_adv_model.train()
+    print_model_q_values(-1, qsa_pr_model, qsa_adv_model, device, "Before training starts", state_mapping, solver, game)
+
+    for epoch in range(total_epochs):
+        pbar = tqdm(dataloader, total=len(dataloader))
+        total_loss = 0
+        total_pr_loss = 0
+        total_adv_loss = 0
+        total_batches = 0
+
+        for obs, acts, adv_acts, ret, rew, seq_len, player_ids in pbar:
+            total_batches += 1
+            qsa_pr_optimizer.zero_grad()
+            qsa_adv_optimizer.zero_grad()
+            
+          
+            batch_size = obs.shape[0]
+            obs_len = obs.shape[1]
+            
+            obs = obs.view(batch_size, obs_len, -1).to(device)
+            acts = acts.to(device)
+            adv_acts = adv_acts.to(device)
+
+            current_player = 0
+
+            #Masking ...................
+            padding_mask = (player_ids == -1)  # Padding timesteps
+            no_action_mask = (acts[:, :, 2] == 1.0)  # "No action" timesteps  
+            zero_action_mask = torch.all(acts == 0, dim=-1)  # All-zero padding timesteps
+            not_player_turn = (player_ids != current_player)  # Not current player's turn
+            
+            # Combined invalid mask: True for timesteps to EXCLUDE from training
+            acts_mask = padding_mask | zero_action_mask 
+            
+            # For adversarial actions, similar logic
+            adv_no_action_mask = (adv_acts[:, :, 2] == 1.0)
+            adv_zero_action_mask = torch.all(adv_acts == 0, dim=-1)
+            adv_acts_mask = padding_mask | adv_zero_action_mask
+
+
+            ret = (ret / train_args['scale']).to(device)
+            scale_factor = train_args['scale']
+            seq_len = seq_len.to(device)
+
+            # Calculate the losses at the different tages
+            if epoch < mse_epochs:
+                # MSE-based learning stage to learn general loss landscape
+                ret_pr_pred = qsa_pr_model(obs, acts).view(batch_size, obs_len)
+                ret_pr_loss = (((ret_pr_pred - ret) ** 2) * ~acts_mask).mean()
+                ret_adv_pred = qsa_adv_model(obs, acts, adv_acts).view(batch_size, obs_len)
+                ret_adv_loss = (((ret_adv_pred - ret) ** 2) * ~adv_acts_mask).mean()
+                # Backpropagate
+                ret_pr_loss.backward()
+                qsa_pr_optimizer.step()
+                ret_adv_loss.backward()
+                qsa_adv_optimizer.step()
+                # Update losses
+                total_loss += ret_pr_loss.item() + ret_adv_loss.item()
+                total_pr_loss += ret_pr_loss.item()
+                total_adv_loss += ret_adv_loss.item()
+
+                if epoch == mse_epochs - 1 and total_batches == len(dataloader):
+                    print_model_q_values(epoch, qsa_pr_model, qsa_adv_model, device, "After MSE training ends", state_mapping, solver, game)
+
+            elif epoch % 2 == 0:
+                # Max step: protagonist attempts to maximise at each node
+                ret_pr_pred = qsa_pr_model(obs, acts)
+                ret_adv_pred = qsa_adv_model(obs, acts, adv_acts)
+                ret_pr_loss = _expectile_fn(ret_pr_pred - ret_adv_pred.detach(), acts_mask, train_args['alpha'])            
+                # Backpropagate
+                ret_pr_loss.backward()
+                qsa_pr_optimizer.step()
+                # Update losses
+                total_loss += ret_pr_loss.item()
+                total_pr_loss += ret_pr_loss.item()
+            else:
+                # Min step: adversary attempts to minimise at each node             
+                rewards = (ret[:, :-1] - gamma * ret[:, 1:]).view(batch_size, -1, 1)
+                ret_pr_pred = qsa_pr_model(obs, acts)
+                ret_adv_pred = qsa_adv_model(obs, acts, adv_acts)
+                ret_tree_loss = _expectile_fn(
+                    ret_pr_pred[:, 1:].detach() + rewards - ret_adv_pred[:, :-1], 
+                    adv_acts_mask[:, :-1], 
+                    train_args['alpha']
+                )
+                ret_leaf_loss = (
+                    (ret_adv_pred[range(batch_size), seq_len].flatten() - ret[range(batch_size), seq_len]) ** 2
+                ).mean()
+                ret_adv_loss = ret_tree_loss * (1 - train_args['leaf_weight']) + ret_leaf_loss * train_args['leaf_weight']                    
+                # Backpropagate
+                ret_adv_loss.backward()
+                qsa_adv_optimizer.step()
+                # Update losses
+                total_loss += ret_adv_loss.item()
+                total_adv_loss += ret_adv_loss.item()
+
+            pbar.set_description(
+                f"Epoch {epoch} | "
+                f"Total Loss: {total_loss / total_batches:.4f} | "
+                f"Pr Loss: {total_pr_loss / total_batches:.4f} | "
+                f"Adv Loss: {total_adv_loss / total_batches:.4f}"
+            )
+        print_model_q_values(epoch, qsa_pr_model, qsa_adv_model, device, f"Epoch {epoch} finish", state_mapping, solver, game)
+
+    # Get the learned return labels and prompt values (i.e. highest returns-to-go)
+    print("\n=== Trajectory Relabeling ===")
+    qsa_pr_model.eval()
+    relabeled_trajs = []
+    prompt_value = -np.inf
+    scale_factor = train_args['scale']
+
+    with torch.no_grad():
+        for traj in tqdm(trajs, desc="Relabeling trajectories"):
+            # Convert trajectory data to tensors
+            obs_tensor = torch.from_numpy(np.array(traj.obs)).float().to(device).unsqueeze(0)  # (1, seq_len, obs_dim)
+            acts_tensor = torch.from_numpy(np.array(traj.actions)).float().to(device).unsqueeze(0)  # (1, seq_len, 3)
+
+            # Debug: Print shapes for first trajectory
+            if len(relabeled_trajs) == 0:
+                print(f"Debug - obs_tensor shape: {obs_tensor.shape}")
+                print(f"Debug - acts_tensor shape: {acts_tensor.shape}")
+
+            # Get Q-values for the (state, action) pairs in this trajectory
+            # qsa_pr_model(obs, acts) should return Q(s_t, a_t) for each timestep
+            returns_pred = qsa_pr_model(obs_tensor, acts_tensor)
+            
+            # Debug: Print prediction shape for first trajectory  
+            if len(relabeled_trajs) == 0:
+                print(f"Debug - returns_pred shape: {returns_pred.shape}")
+            
+            # Handle different possible output shapes
+            if len(returns_pred.shape) == 3:
+                if returns_pred.shape[-1] == 1:
+                    # Shape: (1, seq_len, 1) -> (seq_len,)
+                    returns_values = returns_pred.squeeze(-1).squeeze(0)
+                else:
+                    # This shouldn't happen with your model, but just in case
+                    print(f"Warning: Unexpected shape {returns_pred.shape}")
+                    returns_values = returns_pred.squeeze(0)
+            else:
+                # Shape: (1, seq_len) -> (seq_len,)
+                returns_values = returns_pred.squeeze(0)
+            
+            returns = (returns_values * scale_factor).cpu().numpy()
+            
+            # Ensure it's a 1D array
+            returns = returns.flatten()
+            
+            # Debug: Print values for first trajectory
+            if len(relabeled_trajs) == 0:
+                print(f"Debug - returns shape: {returns.shape}")
+                print(f"Debug - returns values: {returns}")
+                print(f"Debug - original minimax_returns_to_go: {getattr(traj, 'minimax_returns_to_go', 'Not found')}")
+            
+            # Update prompt value (use the first timestep's return-to-go as the "prompt value")
+            if len(returns) > 0:
+                current_prompt = returns[0]
+                if prompt_value == -np.inf or current_prompt > prompt_value:
+                    prompt_value = current_prompt
+            
+            # Create relabeled trajectory
+            relabeled_traj = deepcopy(traj)
+            relabeled_traj.minimax_returns_to_go = returns.tolist()
+            relabeled_trajs.append(relabeled_traj)
+
+    print(f"Relabeling complete. Prompt value: {prompt_value:.3f}")
+    print(f"Total trajectories relabeled: {len(relabeled_trajs)}")
+
+    return relabeled_trajs, np.round(prompt_value, decimals=3)

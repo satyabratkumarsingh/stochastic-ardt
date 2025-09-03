@@ -1,148 +1,285 @@
 import gym
 import numpy as np
-import torch
-import torch.nn.functional as F
 from gym import spaces
-
-# Assuming BaseOfflineEnv is defined elsewhere, or you can remove its inheritance if not needed.
-# For a standard Gym environment, you typically don't inherit from BaseOfflineEnv directly.
-# Let's assume you've imported it correctly or it's implicitly handled.
-
+import torch
 
 class KuhnPokerEnv(gym.Env):
     def __init__(self):
-        super().__init__() # Call parent constructor
+        super().__init__()
         self.env_name = "kuhn_poker"
-        # Define action spaces (discrete: 0 = pass, 1 = bet)
-        self.action_space = spaces.Discrete(2) # Player 0 actions
-        self.adv_action_space = spaces.Discrete(2) # Player 1 (adversary) actions
         
-        # State: One-hot encoding for cards (J, Q, K) + game history.
-        # Max history: P0-bet, P1-bet (2 actions) or P0-pass, P1-bet, P0-bet (3 actions)
-        # States could be: (Player Card) + (Opponent Card if seen) + (Action History)
-        # For simplicity, a small fixed observation space might represent abstract states.
-        # Your current state_mapping logic is abstracting states.
-        # Let's simplify state for now to focus on rewards, then revisit.
-        # For Kuhn Poker, a state might include (Player Card, History of actions so far).
-        # A 12-dim observation space might be sufficient for a one-hot + history encoding.
-        self.observation_space = spaces.Box(low=0, high=1, shape=(12,), dtype=np.uint8) # Placeholder
+        # Action spaces: 0=Pass/Check/Fold, 1=Bet/Call
+        self.action_space = spaces.Discrete(3)
+        self.adv_action_space = spaces.Discrete(3)
         
-        self.max_episode_steps = 3 # Maximum 3 actions in Kuhn Poker
-        self.cards_deck = [0, 1, 2] # Cards: Jack (0), Queen (1), King (2)
+        # Build state mapping with only valid non-terminal states
+        self.state_mapping, self.state_dim = self._build_kuhn_state_mapping()
         
-        self.player_card_idx = None
-        self.opponent_card_idx = None
-        self.player_turn = 0  # 0 for Player 0 (Agent), 1 for Player 1 (Adversary)
-        self.history = []     # List of actions taken in sequence [P0_action, P1_action, P0_action_if_needed]
-        self.pot = 0          # Tracks total money in pot, starts at 2 (1 from each player)
-        self.state_mapping = {} 
-        self.actions_taken = [] 
-
-        # State mapping is for your abstract observation space, might be complex
-        # if not carefully managed with actual game states.
-        # For now, let's make get_obs simpler or remove state mapping until rewards are correct.
-        # A simple state for Kuhn Poker is [player_card_one_hot] + [opponent_card_one_hot (if revealed)] + [action_history_one_hot]
-        # Given your 12-dim state, it likely implies some compact encoding.
-        # We'll stick to your `get_obs` for now but focus on `step`.
-
-    def get_obs(self):
-        state_key = self._get_state_key()
-        if state_key not in self.state_mapping:
-            index = min(len(self.state_mapping), self.observation_space.shape[0] - 1)
-            one_hot = np.zeros(self.observation_space.shape[0], dtype=np.float32)
-            one_hot[index] = 1
-            self.state_mapping[state_key] = one_hot
-        obs = self.state_mapping[state_key].astype(np.float32)
-        return obs
-
-
-    def _get_state_key(self):
-        """Generate a unique key for the current state based on card and action history."""
-        # Your existing logic seems to try and represent the full game state.
-        # This is where the actual game state for observation comes from.
-        card_str = str(self.player_card_idx)
-        history_str = "".join([str(a) for a in self.history]) # Use 0/1 directly
+        # Observation space
+        self.observation_space = spaces.Box(
+            low=0, high=1, shape=(self.state_dim,), dtype=np.float32
+        )
         
-        # This logic is trying to infer a state key based on turn and history, which is complex.
-        # For standard Kuhn Poker, the history `[P0_action, P1_action, P0_final_action]`
-        # combined with the player's card defines the "state".
-        return f"C{card_str}_H{history_str}_P{self.player_turn}"
+        self.max_episode_steps = 3
+        self.cards = [0, 1, 2]  # Jack=0, Queen=1, King=2
+        
+        # Standard Kuhn Poker payoffs (ante=1, bet=1)
+        self.ante = 1
+        self.bet_size = 1
+        
+        self.reset()
+
+    def _build_kuhn_state_mapping(self):
+        """Build state mapping for non-terminal Kuhn Poker states only"""
+        canonical_states = [
+            # Initial states (card only)
+            "0", "1", "2",
+            # After first pass (card + p)
+            "0p", "1p", "2p",
+            # After first bet (card + b) 
+            "0b", "1b", "2b",
+            # After pass-bet (card + pb) - still non-terminal
+            "0pb", "1pb", "2pb"
+        ]
+        
+        state_dim = len(canonical_states)
+        state_mapping = {
+            state: np.eye(state_dim, dtype=np.float32)[i] 
+            for i, state in enumerate(canonical_states)
+        }
+        
+        return state_mapping, state_dim
 
     def reset(self, seed=None, options=None):
-        """Reset the environment to a new game."""
         if seed is not None:
             np.random.seed(seed)
-            # Important: `np.random.permutation` also uses numpy's global RNG
-            rng = np.random.default_rng(seed)
-            self.cards_deck = rng.permutation([0, 1, 2])
+        
+        dealt_cards = np.random.choice(self.cards, size=2, replace=False)
+        self.player_card = dealt_cards[0]
+        self.opponent_card = dealt_cards[1]
+        
+        self.history = ""
+        self.current_player = 0
+        self.game_over = False
+        self.pot = 2 * self.ante  # Both players ante up
+        
+        self.episode_data = {
+            'obs': [],
+            'actions': [],
+            'adv_actions': [],
+            'rewards': [],
+            'adv_rewards': [],
+            'infos': [],
+            'dones': []
+        }
+        
+        # Record initial observation
+        self._record_timestep(None, None)
+        return self.get_obs(), {}
+
+    def get_obs(self):
+        """Get observation from current player's perspective for non-terminal states only"""
+        if self.game_over:
+            # Terminal states have no observation
+            return np.zeros(self.state_dim, dtype=np.float32)
+        
+        # Always from Player 0's perspective for consistency
+        state_key = str(self.player_card) + self.history
+        if state_key in self.state_mapping:
+            return self.state_mapping[state_key].copy()
         else:
-            self.cards_deck = np.random.permutation([0, 1, 2])
-        
-        self.player_card_idx = self.cards_deck[0]
-        self.opponent_card_idx = self.cards_deck[1]
-        
-        # For clearer debugging:
-        # self.player_card = ['J', 'Q', 'K'][self.player_card_idx]
-        # self.opponent_card = ['J', 'Q', 'K'][self.opponent_card_idx]
-
-        self.history = []     # Store actual actions (0 or 1)
-        self.player_turn = 0  # Player 0 (Agent) starts
-        self.pot = 2          # Ante: 1 from each player
-
-        # Clear actions_taken if it's for worst_case_env_step, or remove if redundant
-        if hasattr(self, 'actions_taken'):
-            del self.actions_taken # Clear it if it's meant for a single episode
-        self.actions_taken = [] # For compatibility with worst_case_env_step
-
-
-        return self.get_obs()
-
+            # Should not happen now
+            raise ValueError(f"Unknown state '{state_key}' in non-terminal observation!")
 
     def step(self, action):
-        action = int(action)
-        if action not in [0, 1]:
-            raise ValueError(f"Invalid action: {action}, must be 0 (pass) or 1 (bet)")
+        if self.game_over:
+            raise ValueError("Game over. Call reset().")
+        if action not in [0, 1, 2]:
+            raise ValueError(f"Invalid action {action}. Use 0=Pass/Check/Fold, 1=Bet/Call, 2=NoAction")
+        
+        reward, done = self._execute_action(action)
+        self._record_timestep(action, reward)
+        
+        info = {
+            "player_id": self.current_player,
+            "action": action,
+            "history": self.history,
+            "terminal": done,
+            "pot": self.pot
+        }
+        
+        return self.get_obs(), reward, done, False, info
+
+    def _execute_action(self, action):
+        """Execute action and return reward and done status (always from Player 0's perspective)"""
+        # Add bet to pot if player bets/calls
+        if action == 1:
+            self.pot += self.bet_size
+        
+        self.history += "p" if action == 0 else "b"
         reward = 0
         done = False
-        truncated = False
-        info = {"player_id": self.player_turn, "adv_action": -1}
-  
-        if self.player_turn == 0:
-            self.history.append(action)
-            if len(self.history) == 1:
-                if action == 0:
-                    self.player_turn = 1
-                elif action == 1:
-                    self.pot += 1
-                    self.player_turn = 1
-            elif len(self.history) == 3 and self.history[:2] == [0, 1]:
-                if action == 0:
-                    reward = -2
-                    done = True
-                elif action == 1:
-                    self.pot += 1
-                    reward = 2 if self.player_card_idx > self.opponent_card_idx else -2
-                    done = True
-                self.player_turn = -1
-        elif self.player_turn == 1:
-            self.history.append(action)
-            info["adv_action"] = action
-            if len(self.history) == 2:
-                if self.history[0] == 0:
-                    if action == 0:
-                        reward = 1 if self.player_card_idx > self.opponent_card_idx else -1
-                        done = True
-                    elif action == 1:
-                        self.pot += 1
-                        self.player_turn = 0
-                elif self.history[0] == 1:
-                    self.pot += 1
-                    if action == 0:
-                        reward = 1
-                        done = True
-                    elif action == 1:
-                        self.pot += 1
-                        reward = 2 if self.player_card_idx > self.opponent_card_idx else -2
-                        done = True
-    
-        return self.get_obs(), reward, done, truncated, info
+        
+        # Terminal conditions - calculate Player 0's final payoff
+        if self.history == "pp":  # Both pass
+            done = True
+            if self.player_card > self.opponent_card:
+                reward = self.ante  # Player 0 wins ante from opponent
+            else:
+                reward = -self.ante  # Player 0 loses ante to opponent
+                
+        elif self.history == "bp":  # Player 0 bets, Player 1 folds
+            done = True
+            reward = self.ante  # Player 0 wins opponent's ante
+            
+        elif self.history == "bb":  # Both bet - showdown
+            done = True
+            if self.player_card > self.opponent_card:
+                reward = self.ante + self.bet_size  # Win ante + bet
+            else:
+                reward = -(self.ante + self.bet_size)  # Lose ante + bet
+                
+        elif self.history == "pbp":  # Player 0 passes, Player 1 bets, Player 0 folds
+            done = True  
+            reward = -self.ante  # Player 0 loses ante
+            
+        elif self.history == "pbb":  # Player 0 passes, Player 1 bets, Player 0 calls
+            done = True
+            if self.player_card > self.opponent_card:
+                reward = self.ante + self.bet_size  # Win ante + bet
+            else:
+                reward = -(self.ante + self.bet_size)  # Lose ante + bet
+        
+        if done:
+            self.game_over = True
+            
+        if not done:
+            # Switch players
+            self.current_player = 1 - self.current_player
+            
+        return reward, done
+
+    def _record_timestep(self, action, reward):
+        """Record timestep data consistently from Player 0's perspective"""
+        if not self.game_over:
+            self.episode_data['obs'].append(self.get_obs())
+        
+        if action is not None:
+            if self.current_player == 0:
+                # Player 0's turn
+                self.episode_data['actions'].append(self.action_to_onehot(action))
+                self.episode_data['adv_actions'].append([0.0, 0.0, 1.0])  # Opponent didn't act
+                self.episode_data['rewards'].append(reward)
+                self.episode_data['adv_rewards'].append(-reward)
+            else:
+                # Player 1's turn - record as adversarial action
+                self.episode_data['actions'].append([0.0, 0.0, 1.0])  # Player 0 didn't act
+                self.episode_data['adv_actions'].append(self.action_to_onehot(action))
+                # Rewards from Player 0's perspective
+                self.episode_data['rewards'].append(-reward if reward != 0 else 0)
+                self.episode_data['adv_rewards'].append(reward if reward != 0 else 0)
+            
+            # Info dictionary
+            info = {
+                "player_id": self.current_player,
+                "action": action,
+                "no_action": action == 2
+            }
+            self.episode_data['infos'].append(info)
+            self.episode_data['dones'].append(self.game_over)
+
+    def action_to_onehot(self, action):
+        """Convert action to one-hot encoding for Kuhn Poker"""
+        if action == 0:
+            return [1.0, 0.0, 0.0]  # Pass/Check/Fold
+        elif action == 1:
+            return [0.0, 1.0, 0.0] # Bet/Call
+        elif action == 2:
+            return [0.0, 0.0, 1.0] # NoAction
+        else:
+            raise ValueError(f"Invalid action {action}. Kuhn Poker only has actions 0 (pass) and 1 (bet)")
+
+    def get_episode_data(self):
+        """Return episode data with minimax returns-to-go"""
+        if not self.game_over:
+            return None
+            
+        # Calculate standard returns-to-go
+        rewards = self.episode_data['rewards']
+        returns_to_go = []
+        cumulative_return = 0
+        for reward in reversed(rewards):
+            cumulative_return += reward
+            returns_to_go.insert(0, cumulative_return)
+        
+        # For this simple environment, use the same values for minimax RTG
+        # In practice, these would come from minimax value calculations
+        minimax_returns_to_go = returns_to_go.copy()
+        
+        return {
+            "episode_id": np.random.randint(1, 1000000),
+            "obs": self.episode_data['obs'],
+            "actions": self.episode_data['actions'],
+            "adv_actions": self.episode_data['adv_actions'], 
+            "rewards": self.episode_data['rewards'],
+            "adv_rewards": self.episode_data['adv_rewards'],
+            "infos": self.episode_data['infos'],
+            "dones": self.episode_data['dones'],
+            "minimax_returns_to_go": minimax_returns_to_go
+        }
+
+    def get_legal_actions(self):
+        """Get legal actions for current state"""
+        return [] if self.game_over else [0, 1]
+
+    def get_nash_equilibrium_value(self):
+        """Return the Nash equilibrium value for Player 0 in standard Kuhn Poker"""
+        # This is the theoretical value with ante=1, bet=1
+        return 1/18
+
+    def render(self, mode='human'):
+        """Render the current game state"""
+        cards = ['Jack', 'Queen', 'King']
+        player_card_name = cards[self.player_card]
+        opponent_card_name = cards[self.opponent_card] if self.game_over else "Hidden"
+        
+        print(f"=== Kuhn Poker ===")
+        print(f"Player 0 card: {player_card_name}")
+        print(f"Player 1 card: {opponent_card_name}")
+        print(f"History: '{self.history}'")
+        print(f"Current player: {self.current_player}")
+        print(f"Pot: {self.pot}")
+        print(f"Game over: {self.game_over}")
+        print("==================")
+
+    def get_optimal_strategy(self, player_card, history):
+        """
+        Get the Nash equilibrium mixed strategy for given state
+        Returns probabilities for [pass/fold, bet/call]
+        """
+        state_key = f"{player_card}{history}"
+        
+        # Nash equilibrium strategies for standard Kuhn Poker
+        nash_strategies = {
+            # Player 0 (first to act)
+            "0": [2/3, 1/3],      # Jack: Pass 2/3, Bet 1/3
+            "1": [1.0, 0.0],      # Queen: Always Pass
+            "2": [0.0, 1.0],      # King: Always Bet
+            
+            # Player 1 responses to pass
+            "0p": [2/3, 1/3],     # Jack: Check 2/3, Bet 1/3  
+            "1p": [1.0, 0.0],     # Queen: Always Check
+            "2p": [0.0, 1.0],     # King: Always Bet
+            
+            # Player 1 responses to bet
+            "0b": [1.0, 0.0],     # Jack: Always Fold
+            "1b": [2/3, 1/3],     # Queen: Fold 2/3, Call 1/3
+            "2b": [0.0, 1.0],     # King: Always Call
+            
+            # Player 0 responses to pass-bet
+            "0pb": [1.0, 0.0],    # Jack: Always Fold
+            "1pb": [2/3, 1/3],    # Queen: Fold 2/3, Call 1/3  
+            "2pb": [0.0, 1.0],    # King: Always Call
+        }
+        
+        return nash_strategies.get(state_key, [0.5, 0.5])  # Default to uniform if unknown

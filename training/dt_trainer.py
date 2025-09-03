@@ -36,11 +36,7 @@ class DecisionTransformerTrainer:
             max_length=horizon,
             max_ep_len=effective_max_ep_len,
             action_tanh=(action_type == 'continuous'),
-            action_type=action_type,
-            n_layer=2,
-            n_head=1,
-            n_inner=256,
-            dropout=0.1
+            rtg_seq=True
         ).to(self.device)
         
         dt_optimizer = torch.optim.AdamW(
@@ -53,7 +49,7 @@ class DecisionTransformerTrainer:
 
     def _train_single_model(self, relabeled_trajs: List, use_minimax_returns: bool, 
                            obs_size: int, action_size: int, action_type: str, 
-                           horizon: int, effective_max_ep_len: int, model_suffix: str) -> torch.nn.Module:
+                           horizon: int, effective_max_ep_len: int, model_suffix: str) -> Tuple[torch.nn.Module, List]:
         """Train a single DT model with specified return type"""
         
         print(f"\n--- Training DT Model ({model_suffix}) ---")
@@ -75,7 +71,7 @@ class DecisionTransformerTrainer:
         
         dt_dataloader = torch.utils.data.DataLoader(
             dt_dataset,
-            batch_size=self.dt_train_args.get('batch_size', 64),
+            batch_size=self.dt_train_args.get('batch_size', 256),
             num_workers=self.n_cpu
         )
 
@@ -83,14 +79,14 @@ class DecisionTransformerTrainer:
         dt_model.train()
         training_losses = []
         
-        num_epochs = self.dt_train_args.get('dt_epochs', 5)
+        num_epochs = self.dt_train_args.get('dt_epochs', 10)
         for epoch in range(num_epochs):
             total_dt_loss = 0
             batch_count = 0
             
             pbar = tqdm(dt_dataloader, desc=f"Epoch {epoch+1}/{num_epochs} ({model_suffix})")
             for batch_idx, batch_data in enumerate(pbar):
-                obs, acts, adv_acts, returns_data, seq_len = [d.to(self.device) for d in batch_data]
+                obs, acts, adv_acts, returns_to_go, rewards, seq_len = [d.to(self.device) for d in batch_data]
                 
                 dt_optimizer.zero_grad()
 
@@ -102,7 +98,8 @@ class DecisionTransformerTrainer:
                 state_preds, action_preds_tensor, return_preds = dt_model(
                     states=obs, 
                     actions=acts, 
-                    returns_to_go=returns_data.unsqueeze(-1),
+                    returns_to_go=returns_to_go.unsqueeze(-1),
+                    rewards=rewards.unsqueeze(-1),
                     timesteps=timesteps, 
                     attention_mask=attention_mask
                 )
@@ -134,7 +131,7 @@ class DecisionTransformerTrainer:
                 loss.backward()
                 
                 # Gradient clipping
-                torch.nn.utils.clip_grad_norm_(dt_model.parameters(), max_norm=1.0)
+                #torch.nn.utils.clip_grad_norm_(dt_model.parameters(), max_norm=1.0)
                 
                 dt_optimizer.step()
                 total_dt_loss += loss.item()
@@ -153,15 +150,15 @@ class DecisionTransformerTrainer:
 
         return dt_model, training_losses
 
-    def train(self, relabeled_trajs: List, method: str) -> Tuple[torch.nn.Module, torch.nn.Module]:
+    def train(self, relabeled_trajs: List, method: str) -> torch.nn.Module:
         """
-        Train two Decision Transformer models - one with minimax returns, one with original returns
+        Train Decision Transformer model with minimax returns only
         
         Returns:
-            Tuple of (minimax_model, original_model)
+            Trained minimax model
         """
         
-        print(f"\n=== Training Decision Transformer Models ===")
+        print(f"\n=== Training Decision Transformer Model ===")
         
         # Extract model parameters from first trajectory
         first_traj = relabeled_trajs[0]
@@ -179,15 +176,15 @@ class DecisionTransformerTrainer:
             action_type = 'continuous'
 
         # Calculate effective parameters
-        horizon = self.dt_train_args.get('context_size', 20)
+        horizon = self.dt_train_args.get('context_size', 5)
         max_ep_len_from_data = max([len(t.obs) for t in relabeled_trajs]) if relabeled_trajs else 100
         effective_max_ep_len = max(max_ep_len_from_data, horizon)
 
         print(f"Model config: obs_size={obs_size}, action_size={action_size}, action_type={action_type}")
         print(f"Horizon: {horizon}, Max episode length: {effective_max_ep_len}")
 
-        # Train model with minimax returns
-        print(f"\n🚀 Training Model 1: MINIMAX RETURNS")
+        # Train model with minimax returns only
+        print(f"\n🚀 Training Minimax Model")
         minimax_model, minimax_losses = self._train_single_model(
             relabeled_trajs=relabeled_trajs,
             use_minimax_returns=True,
@@ -199,20 +196,7 @@ class DecisionTransformerTrainer:
             model_suffix="Minimax"
         )
 
-        # Train model with original returns
-        print(f"\n🚀 Training Model 2: ORIGINAL RETURNS")
-        original_model, original_losses = self._train_single_model(
-            relabeled_trajs=relabeled_trajs,
-            use_minimax_returns=False,
-            obs_size=obs_size,
-            action_size=action_size,
-            action_type=action_type,
-            horizon=horizon,
-            effective_max_ep_len=effective_max_ep_len,
-            model_suffix="Original"
-        )
-
-        # Save models with different suffixes
+        # Save minimax model
         self._save_model(minimax_model, minimax_losses, method, "minimax", {
             "obs_size": obs_size,
             "action_size": action_size,
@@ -222,17 +206,8 @@ class DecisionTransformerTrainer:
             "use_minimax_returns": True
         })
 
-        self._save_model(original_model, original_losses, method, "original", {
-            "obs_size": obs_size,
-            "action_size": action_size,
-            "action_type": action_type,
-            "horizon": horizon,
-            "effective_max_ep_len": effective_max_ep_len,
-            "use_minimax_returns": False
-        })
-
-        print(f"\n✅ Both DT models training complete!")
-        return minimax_model, original_model
+        print(f"\n✅ DT model training complete!")
+        return minimax_model
 
     def _save_model(self, model: torch.nn.Module, training_losses: List, method: str, 
                    model_type: str, model_params: Dict):
@@ -262,11 +237,11 @@ class DecisionTransformerTrainer:
 
     def load_model(self, method: str, model_type: str = "minimax") -> torch.nn.Module:
         """
-        Load a specific DT model
+        Load the minimax DT model
         
         Args:
             method: Training method used
-            model_type: Either "minimax" or "original"
+            model_type: Should be "minimax" (only option now)
         """
         # Create model path with suffix
         base_path = dt_model_name(seed=self.seed, game=self.game_name, method=method)
@@ -282,8 +257,7 @@ class DecisionTransformerTrainer:
         # Load checkpoint
         checkpoint = torch.load(model_path, map_location=self.device)
         model_params = checkpoint["model_params"]
-        
-        # Recreate model
+
         dt_model = DecisionTransformer(
             state_dim=model_params["obs_size"],
             act_dim=model_params["action_size"],
@@ -291,11 +265,7 @@ class DecisionTransformerTrainer:
             max_length=model_params["horizon"],
             max_ep_len=model_params["effective_max_ep_len"],
             action_tanh=(model_params["action_type"] == 'continuous'),
-            action_type=model_params["action_type"],
-            n_layer=2,
-            n_head=1,
-            n_inner=256,
-            dropout=0.1
+            rtg_seq=True
         ).to(self.device)
         
         # Load state dict
@@ -304,13 +274,8 @@ class DecisionTransformerTrainer:
         print(f"✅ Loaded {model_type} DT model from {model_path}")
         return dt_model
 
-    def train_and_save_both(self, relabeled_trajs: List, method: str) -> Dict[str, torch.nn.Module]:
+    def train_and_save(self, relabeled_trajs: List, method: str) -> torch.nn.Module:
         """
-        Convenience method that trains both models and returns them in a dictionary
+        Train and save the minimax model
         """
-        minimax_model, original_model = self.train(relabeled_trajs, method)
-        
-        return {
-            "minimax": minimax_model,
-            "original": original_model
-        }
+        return self.train(relabeled_trajs, method)

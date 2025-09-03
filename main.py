@@ -9,7 +9,7 @@ import pickle
 from offline_setup.toy_env import ToyOfflineEnv
 from training.generate_max_min import generate_maxmin
 from training.post_max_min_training import train_dt_models
-from evaluation.evaluate_models import load_and_evaluate_models, quick_model_comparison
+from evaluation.evaluate_models import load_and_evaluate_models
 
 MUJOCO_TARGETS_DICT = {'halfcheetah': [2000, 3000], 'hopper': [500, 1000], 'walker2d': [800, 1000]}
 
@@ -120,6 +120,7 @@ if __name__ == '__main__':
         task = ToyOfflineEnv(game=variant['game_name'], path= variant['offline_file'])
         env = task.env_cls()
         trajs = task.trajs
+        #task.save_trajectories()
         print("==============")
         print(trajs[0])
         env_params = {
@@ -131,25 +132,25 @@ if __name__ == '__main__':
         }
         ret_file = variant['ret_file']
 
-        generate_maxmin(
-            variant['game_name'],
-            variant['method'],
-            variant['seed'],
-            env, 
-            trajs, 
-            variant['config'], 
-            variant['device'], 
-            variant['n_cpu'], 
-            is_simple_model=True,
-            is_toy=(variant['env_name'] == 'toy')
-        )
-        train_dt_models(seed=variant['seed'], 
-            game_name= variant['game_name'],
-            method= variant['method'],
-            dt_train_args= variant['config'],
-            n_cpu= variant['n_cpu'],
-            device=variant['device']
-        )
+        # generate_maxmin(
+        #     variant['game_name'],
+        #     variant['method'],
+        #     variant['seed'],
+        #     env, 
+        #     trajs, 
+        #     variant['config'], 
+        #     variant['device'], 
+        #     variant['n_cpu'], 
+        #     is_simple_model=False,
+        #     is_toy=(variant['env_name'] == 'toy')
+        # )
+        # train_dt_models(seed=variant['seed'], 
+        #     game_name= variant['game_name'],
+        #     method= variant['method'],
+        #     dt_train_args= variant['config'],
+        #     n_cpu= variant['n_cpu'],
+        #     device=variant['device']
+        # )
 
         load_and_evaluate_models(seed=variant['seed'], 
                                 game_name= variant['game_name'],
@@ -158,8 +159,3 @@ if __name__ == '__main__':
                                 env_instance=env,
                                 device=variant['device']
                                 )
-        quick_model_comparison(seed=variant['seed'], game_name= variant['game_name'],
-                                method= variant['method'],
-                                config_path=variant['config'], 
-                                env_instance=env,
-                                device=variant['device'])

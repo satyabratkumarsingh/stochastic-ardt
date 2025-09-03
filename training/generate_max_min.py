@@ -65,7 +65,8 @@ def generate_maxmin(
         device,
         n_cpu,
         is_simple_model=is_simple_model,
-        is_toy=is_toy
+        is_toy=is_toy,
+        state_mapping = env.state_mapping
     )
 
     pkl_file_relabeled = pkl_name_min_max_relabeled(seed=seed, game= game_name, method=method)
@@ -79,20 +80,20 @@ def generate_maxmin(
     print(f"Saved relabeled trajectories to {pkl_file_relabeled}")
 
     # Convert dataclasses -> dict -> lists for JSON
-    relabeled_trajs_dict = [asdict(t) for t in relabeled_trajs]
-    relabeled_trajs_clean = [_convert_ndarray_to_list(t) for t in relabeled_trajs_dict]
+    # relabeled_trajs_dict = [asdict(t) for t in relabeled_trajs]
+    # relabeled_trajs_clean = [_convert_ndarray_to_list(t) for t in relabeled_trajs_dict]
 
-    with open(json_file, "w") as f: # Use final prefix for JSON
-        json.dump(relabeled_trajs_clean, f, indent=4) # Added indent for readability
-    print(f"Saved JSON representation to {json_file}")
+    # with open(json_file, "w") as f: # Use final prefix for JSON
+    #     json.dump(relabeled_trajs_clean, f, indent=4) # Added indent for readability
+    # print(f"Saved JSON representation to {json_file}")
 
 
-    # --- JSON version for prompt_value ---
-    # The fix ensures this conversion handles NumPy scalar types correctly
-    prompt_value_clean = _convert_ndarray_to_list(prompt_value)
-    with open(prompt_file, "w") as f: # Use final prefix for JSON prompt
-        json.dump(prompt_value_clean, f)
-    print(f"Saved prompt JSON to {prompt_file}")
+    # # --- JSON version for prompt_value ---
+    # # The fix ensures this conversion handles NumPy scalar types correctly
+    # prompt_value_clean = _convert_ndarray_to_list(prompt_value)
+    # with open(prompt_file, "w") as f: # Use final prefix for JSON prompt
+    #     json.dump(prompt_value_clean, f)
+    # print(f"Saved prompt JSON to {prompt_file}")
 
 
 def _normalize_obs(trajs: list[Trajectory]) -> list[Trajectory]:

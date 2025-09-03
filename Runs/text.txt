@@ -1,0 +1,981 @@
+Game type: kuhn_poker
+State dimension: 12
+Action mapping: {'Pass': 0, 'Bet': 1, 'NoAction': 2}
+Action encoding: [Pass, Bet, NoAction]
+Processing Kuhn episodes: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████| 600000/600000 [00:06<00:00, 89153.19it/s]
+==============
+Trajectory(episode_id=1, obs=array([[0., 0., 0., 0., 0., 0., 0., 0., 1., 0., 0., 0.],
+       [0., 1., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.]], dtype=float32), actions=array([[1., 0., 0.],
+       [0., 0., 1.]], dtype=float32), rewards=array([0., 1.], dtype=float32), adv_actions=array([[0., 0., 1.],
+       [1., 0., 0.]], dtype=float32), adv_rewards=array([ 0., -1.], dtype=float32), infos=[{'player_id': 0, 'action': 0}, {'player_id': 1, 'action': 0}], dones=array([False,  True]), minimax_returns_to_go=None)
+******* Running normal ARDT with MAX MIN =======
+Generating ARDT returns (maxmin phase)...
+Loading expert solver from kuhn_poker_solver_cfr_plus.pkl
+Creating models... (simple=False)
+Training...
+
+=== Before training starts ===
+/Users/satya/code/Python/stochastic-ardt/core_models/maxmin/maxmin.py:92: UserWarning: Creating a tensor from a list of numpy.ndarrays is extremely slow. Please consider converting the list to a single numpy.ndarray with numpy.array() before converting to a tensor. (Triggered internally at /Users/runner/work/pytorch/pytorch/pytorch/torch/csrc/utils/tensor_new.cpp:281.)
+  obs_tensor = torch.tensor([state_mapping[state_str]], dtype=torch.float32, device=device).unsqueeze(1)
+0    (Jack ) | Q(Pass/Bet)=0.011/0.011 | Nash=1.00/0.00 | L1=1.000 | Exploit=0.0000
+0p   (Jack ) | Q(Pass/Bet)=0.016/0.013 | Nash=1.00/0.00 | L1=0.999 | Exploit=0.0000
+0b   (Jack ) | Q(Pass/Bet)=0.013/0.010 | Nash=1.00/0.00 | L1=0.999 | Exploit=0.0000
+0pb  (Jack ) | Q(Pass/Bet)=0.013/0.012 | Nash=1.00/0.00 | L1=0.999 | Exploit=0.0000
+1    (Queen) | Q(Pass/Bet)=0.013/0.010 | Nash=0.67/0.33 | L1=0.332 | Exploit=0.0009
+1p   (Queen) | Q(Pass/Bet)=0.013/0.012 | Nash=1.00/0.00 | L1=0.999 | Exploit=0.0000
+1b   (Queen) | Q(Pass/Bet)=0.016/0.012 | Nash=0.67/0.33 | L1=0.331 | Exploit=0.0013
+1pb  (Queen) | Q(Pass/Bet)=0.015/0.012 | Nash=0.67/0.33 | L1=0.332 | Exploit=0.0011
+2    (King ) | Q(Pass/Bet)=0.013/0.009 | Nash=0.00/1.00 | L1=1.002 | Exploit=0.0032
+2p   (King ) | Q(Pass/Bet)=0.016/0.011 | Nash=0.00/1.00 | L1=1.002 | Exploit=0.0050
+2b   (King ) | Q(Pass/Bet)=0.014/0.012 | Nash=0.00/1.00 | L1=1.001 | Exploit=0.0017
+2pb  (King ) | Q(Pass/Bet)=0.012/0.012 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0007
+
+============================================================
+Nash Analysis: Before training starts
+L1 Deviation:  Mean=0.833  Max=1.002
+KL Divergence: Mean=0.534  Max=0.696
+Exploitability:Mean=0.0012 Max=0.0050
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 0 | Total Loss: 0.5626 | Pr Loss: 0.2962 | Adv Loss: 0.2665: 100%|█████████████████████████████████████████████████████████████████████| 4688/4688 [04:15<00:00, 18.37it/s]
+
+=== Epoch 0 finish ===
+0    (Jack ) | Q(Pass/Bet)=-0.980/-0.978 | Nash=1.00/0.00 | L1=1.001 | Exploit=0.0020
+0p   (Jack ) | Q(Pass/Bet)=-0.984/-0.071 | Nash=1.00/0.00 | L1=1.427 | Exploit=0.9130
+0b   (Jack ) | Q(Pass/Bet)=0.241/1.046 | Nash=1.00/0.00 | L1=1.382 | Exploit=0.8053
+0pb  (Jack ) | Q(Pass/Bet)=-0.994/-0.254 | Nash=1.00/0.00 | L1=1.354 | Exploit=0.7394
+1    (Queen) | Q(Pass/Bet)=1.098/1.148 | Nash=0.67/0.33 | L1=0.358 | Exploit=0.0335
+1p   (Queen) | Q(Pass/Bet)=-0.313/0.323 | Nash=1.00/0.00 | L1=1.308 | Exploit=0.6361
+1b   (Queen) | Q(Pass/Bet)=-0.933/0.807 | Nash=0.67/0.33 | L1=1.035 | Exploit=1.1601
+1pb  (Queen) | Q(Pass/Bet)=-1.281/-0.943 | Nash=0.67/0.33 | L1=0.501 | Exploit=0.2254
+2    (King ) | Q(Pass/Bet)=-0.526/0.529 | Nash=0.00/1.00 | L1=0.517 | Exploit=0.0000
+2p   (King ) | Q(Pass/Bet)=-0.973/-0.046 | Nash=0.00/1.00 | L1=0.567 | Exploit=0.0000
+2b   (King ) | Q(Pass/Bet)=1.163/1.162 | Nash=0.00/1.00 | L1=1.001 | Exploit=0.0014
+2pb  (King ) | Q(Pass/Bet)=-0.200/1.008 | Nash=0.00/1.00 | L1=0.460 | Exploit=0.0000
+
+============================================================
+Nash Analysis: Epoch 0 finish
+L1 Deviation:  Mean=0.909  Max=1.427
+KL Divergence: Mean=0.648  Max=1.250
+Exploitability:Mean=0.3763 Max=1.1601
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 1 | Total Loss: 0.5567 | Pr Loss: 0.2934 | Adv Loss: 0.2633: 100%|█████████████████████████████████████████████████████████████████████| 4688/4688 [04:13<00:00, 18.47it/s]
+
+=== Epoch 1 finish ===
+0    (Jack ) | Q(Pass/Bet)=-0.988/-0.987 | Nash=1.00/0.00 | L1=1.000 | Exploit=0.0004
+0p   (Jack ) | Q(Pass/Bet)=-0.989/0.564 | Nash=1.00/0.00 | L1=1.651 | Exploit=1.5531
+0b   (Jack ) | Q(Pass/Bet)=-0.807/1.070 | Nash=1.00/0.00 | L1=1.735 | Exploit=1.8774
+0pb  (Jack ) | Q(Pass/Bet)=-1.006/-0.189 | Nash=1.00/0.00 | L1=1.387 | Exploit=0.8168
+1    (Queen) | Q(Pass/Bet)=1.122/1.135 | Nash=0.67/0.33 | L1=0.340 | Exploit=0.0091
+1p   (Queen) | Q(Pass/Bet)=-0.207/0.860 | Nash=1.00/0.00 | L1=1.488 | Exploit=1.0671
+1b   (Queen) | Q(Pass/Bet)=-0.915/0.676 | Nash=0.67/0.33 | L1=0.995 | Exploit=1.0607
+1pb  (Queen) | Q(Pass/Bet)=-1.456/-0.969 | Nash=0.67/0.33 | L1=0.572 | Exploit=0.3246
+2    (King ) | Q(Pass/Bet)=-1.017/0.864 | Nash=0.00/1.00 | L1=0.264 | Exploit=0.0000
+2p   (King ) | Q(Pass/Bet)=-0.989/0.021 | Nash=0.00/1.00 | L1=0.534 | Exploit=0.0000
+2b   (King ) | Q(Pass/Bet)=1.164/1.165 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0000
+2pb  (King ) | Q(Pass/Bet)=-0.880/0.887 | Nash=0.00/1.00 | L1=0.292 | Exploit=0.0000
+
+============================================================
+Nash Analysis: Epoch 1 finish
+L1 Deviation:  Mean=0.938  Max=1.735
+KL Divergence: Mean=0.762  Max=2.020
+Exploitability:Mean=0.5591 Max=1.8774
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 2 | Total Loss: 0.5566 | Pr Loss: 0.2934 | Adv Loss: 0.2632: 100%|█████████████████████████████████████████████████████████████████████| 4688/4688 [04:09<00:00, 18.81it/s]
+
+=== Epoch 2 finish ===
+0    (Jack ) | Q(Pass/Bet)=-0.990/-0.983 | Nash=1.00/0.00 | L1=1.003 | Exploit=0.0070
+0p   (Jack ) | Q(Pass/Bet)=-0.974/0.040 | Nash=1.00/0.00 | L1=1.468 | Exploit=1.0143
+0b   (Jack ) | Q(Pass/Bet)=-0.930/0.449 | Nash=1.00/0.00 | L1=1.598 | Exploit=1.3788
+0pb  (Jack ) | Q(Pass/Bet)=-1.047/-1.029 | Nash=1.00/0.00 | L1=1.009 | Exploit=0.0180
+1    (Queen) | Q(Pass/Bet)=1.151/1.162 | Nash=0.67/0.33 | L1=0.339 | Exploit=0.0078
+1p   (Queen) | Q(Pass/Bet)=-0.327/0.481 | Nash=1.00/0.00 | L1=1.383 | Exploit=0.8082
+1b   (Queen) | Q(Pass/Bet)=-0.869/0.972 | Nash=0.67/0.33 | L1=1.059 | Exploit=1.2272
+1pb  (Queen) | Q(Pass/Bet)=-1.336/-1.222 | Nash=0.67/0.33 | L1=0.391 | Exploit=0.0764
+2    (King ) | Q(Pass/Bet)=-0.940/0.431 | Nash=0.00/1.00 | L1=0.405 | Exploit=0.0000
+2p   (King ) | Q(Pass/Bet)=-0.973/-0.361 | Nash=0.00/1.00 | L1=0.703 | Exploit=0.0000
+2b   (King ) | Q(Pass/Bet)=1.162/1.162 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0000
+2pb  (King ) | Q(Pass/Bet)=-0.875/0.631 | Nash=0.00/1.00 | L1=0.363 | Exploit=0.0000
+
+============================================================
+Nash Analysis: Epoch 2 finish
+L1 Deviation:  Mean=0.894  Max=1.598
+KL Divergence: Mean=0.661  Max=1.603
+Exploitability:Mean=0.3781 Max=1.3788
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 3 | Total Loss: 0.5565 | Pr Loss: 0.2933 | Adv Loss: 0.2632: 100%|█████████████████████████████████████████████████████████████████████| 4688/4688 [04:14<00:00, 18.39it/s]
+
+=== Epoch 3 finish ===
+0    (Jack ) | Q(Pass/Bet)=-0.988/-0.988 | Nash=1.00/0.00 | L1=1.000 | Exploit=0.0000
+0p   (Jack ) | Q(Pass/Bet)=-0.974/-0.850 | Nash=1.00/0.00 | L1=1.062 | Exploit=0.1246
+0b   (Jack ) | Q(Pass/Bet)=-0.886/0.984 | Nash=1.00/0.00 | L1=1.733 | Exploit=1.8704
+0pb  (Jack ) | Q(Pass/Bet)=-0.967/-1.160 | Nash=1.00/0.00 | L1=0.904 | Exploit=0.0000
+1    (Queen) | Q(Pass/Bet)=1.163/1.162 | Nash=0.67/0.33 | L1=0.333 | Exploit=0.0003
+1p   (Queen) | Q(Pass/Bet)=-0.329/0.603 | Nash=1.00/0.00 | L1=1.435 | Exploit=0.9322
+1b   (Queen) | Q(Pass/Bet)=-0.921/0.804 | Nash=0.67/0.33 | L1=1.031 | Exploit=1.1500
+1pb  (Queen) | Q(Pass/Bet)=-1.393/-1.511 | Nash=0.67/0.33 | L1=0.274 | Exploit=0.0393
+2    (King ) | Q(Pass/Bet)=-0.905/0.364 | Nash=0.00/1.00 | L1=0.439 | Exploit=0.0000
+2p   (King ) | Q(Pass/Bet)=-0.970/0.049 | Nash=0.00/1.00 | L1=0.531 | Exploit=0.0000
+2b   (King ) | Q(Pass/Bet)=1.162/1.162 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0000
+2pb  (King ) | Q(Pass/Bet)=-0.998/0.520 | Nash=0.00/1.00 | L1=0.360 | Exploit=0.0000
+
+============================================================
+Nash Analysis: Epoch 3 finish
+L1 Deviation:  Mean=0.842  Max=1.733
+KL Divergence: Mean=0.629  Max=2.014
+Exploitability:Mean=0.3431 Max=1.8704
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 4 | Total Loss: 0.5565 | Pr Loss: 0.2933 | Adv Loss: 0.2632: 100%|█████████████████████████████████████████████████████████████████████| 4688/4688 [04:25<00:00, 17.67it/s]
+
+=== Epoch 4 finish ===
+0    (Jack ) | Q(Pass/Bet)=-0.986/-0.986 | Nash=1.00/0.00 | L1=1.000 | Exploit=0.0000
+0p   (Jack ) | Q(Pass/Bet)=-0.971/-0.389 | Nash=1.00/0.00 | L1=1.283 | Exploit=0.5815
+0b   (Jack ) | Q(Pass/Bet)=-0.903/0.425 | Nash=1.00/0.00 | L1=1.581 | Exploit=1.3284
+0pb  (Jack ) | Q(Pass/Bet)=-0.982/-1.108 | Nash=1.00/0.00 | L1=0.937 | Exploit=0.0000
+1    (Queen) | Q(Pass/Bet)=1.160/1.164 | Nash=0.67/0.33 | L1=0.335 | Exploit=0.0026
+1p   (Queen) | Q(Pass/Bet)=-0.327/0.583 | Nash=1.00/0.00 | L1=1.426 | Exploit=0.9106
+1b   (Queen) | Q(Pass/Bet)=-0.938/0.803 | Nash=0.67/0.33 | L1=1.035 | Exploit=1.1605
+1pb  (Queen) | Q(Pass/Bet)=-1.457/-1.521 | Nash=0.67/0.33 | L1=0.301 | Exploit=0.0212
+2    (King ) | Q(Pass/Bet)=-0.913/0.334 | Nash=0.00/1.00 | L1=0.446 | Exploit=0.0000
+2p   (King ) | Q(Pass/Bet)=-0.986/0.246 | Nash=0.00/1.00 | L1=0.452 | Exploit=0.0000
+2b   (King ) | Q(Pass/Bet)=1.164/1.164 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0000
+2pb  (King ) | Q(Pass/Bet)=-0.923/0.362 | Nash=0.00/1.00 | L1=0.433 | Exploit=0.0000
+
+============================================================
+Nash Analysis: Epoch 4 finish
+L1 Deviation:  Mean=0.853  Max=1.581
+KL Divergence: Mean=0.617  Max=1.563
+Exploitability:Mean=0.3337 Max=1.3284
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 5 | Total Loss: 0.5564 | Pr Loss: 0.2933 | Adv Loss: 0.2632: 100%|█████████████████████████████████████████████████████████████████████| 4688/4688 [04:20<00:00, 17.98it/s]
+
+=== Epoch 5 finish ===
+0    (Jack ) | Q(Pass/Bet)=-0.989/-0.989 | Nash=1.00/0.00 | L1=1.000 | Exploit=0.0000
+0p   (Jack ) | Q(Pass/Bet)=-0.962/-0.314 | Nash=1.00/0.00 | L1=1.313 | Exploit=0.6476
+0b   (Jack ) | Q(Pass/Bet)=-0.947/0.005 | Nash=1.00/0.00 | L1=1.443 | Exploit=0.9519
+0pb  (Jack ) | Q(Pass/Bet)=-0.989/-1.130 | Nash=1.00/0.00 | L1=0.930 | Exploit=0.0000
+1    (Queen) | Q(Pass/Bet)=1.188/1.188 | Nash=0.67/0.33 | L1=0.333 | Exploit=0.0000
+1p   (Queen) | Q(Pass/Bet)=-0.329/0.433 | Nash=1.00/0.00 | L1=1.364 | Exploit=0.7622
+1b   (Queen) | Q(Pass/Bet)=-0.902/0.888 | Nash=0.67/0.33 | L1=1.047 | Exploit=1.1937
+1pb  (Queen) | Q(Pass/Bet)=-1.576/-1.417 | Nash=0.67/0.33 | L1=0.413 | Exploit=0.1059
+2    (King ) | Q(Pass/Bet)=-0.979/0.079 | Nash=0.00/1.00 | L1=0.515 | Exploit=0.0000
+2p   (King ) | Q(Pass/Bet)=-0.986/0.018 | Nash=0.00/1.00 | L1=0.536 | Exploit=0.0000
+2b   (King ) | Q(Pass/Bet)=1.188/1.188 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0000
+2pb  (King ) | Q(Pass/Bet)=-0.037/1.273 | Nash=0.00/1.00 | L1=0.425 | Exploit=0.0000
+
+============================================================
+Nash Analysis: Epoch 5 finish
+L1 Deviation:  Mean=0.860  Max=1.443
+KL Divergence: Mean=0.601  Max=1.278
+Exploitability:Mean=0.3051 Max=1.1937
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 6 | Total Loss: 0.5564 | Pr Loss: 0.2933 | Adv Loss: 0.2632: 100%|█████████████████████████████████████████████████████████████████████| 4688/4688 [04:31<00:00, 17.29it/s]
+
+=== Epoch 6 finish ===
+0    (Jack ) | Q(Pass/Bet)=-0.987/-0.987 | Nash=1.00/0.00 | L1=1.000 | Exploit=0.0000
+0p   (Jack ) | Q(Pass/Bet)=-1.000/-0.037 | Nash=1.00/0.00 | L1=1.447 | Exploit=0.9630
+0b   (Jack ) | Q(Pass/Bet)=-0.987/0.440 | Nash=1.00/0.00 | L1=1.613 | Exploit=1.4267
+0pb  (Jack ) | Q(Pass/Bet)=-0.986/-0.705 | Nash=1.00/0.00 | L1=1.139 | Exploit=0.2807
+1    (Queen) | Q(Pass/Bet)=1.169/1.180 | Nash=0.67/0.33 | L1=0.339 | Exploit=0.0073
+1p   (Queen) | Q(Pass/Bet)=-0.330/0.911 | Nash=1.00/0.00 | L1=1.551 | Exploit=1.2406
+1b   (Queen) | Q(Pass/Bet)=-0.943/0.669 | Nash=0.67/0.33 | L1=1.001 | Exploit=1.0746
+1pb  (Queen) | Q(Pass/Bet)=-1.705/-1.549 | Nash=0.67/0.33 | L1=0.411 | Exploit=0.1038
+2    (King ) | Q(Pass/Bet)=-0.987/0.688 | Nash=0.00/1.00 | L1=0.315 | Exploit=0.0000
+2p   (King ) | Q(Pass/Bet)=-1.015/0.490 | Nash=0.00/1.00 | L1=0.363 | Exploit=0.0000
+2b   (King ) | Q(Pass/Bet)=1.180/1.180 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0000
+2pb  (King ) | Q(Pass/Bet)=0.371/1.279 | Nash=0.00/1.00 | L1=0.575 | Exploit=0.0000
+
+============================================================
+Nash Analysis: Epoch 6 finish
+L1 Deviation:  Mean=0.896  Max=1.613
+KL Divergence: Mean=0.677  Max=1.642
+Exploitability:Mean=0.4247 Max=1.4267
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 7 | Total Loss: 0.5565 | Pr Loss: 0.2933 | Adv Loss: 0.2632: 100%|█████████████████████████████████████████████████████████████████████| 4688/4688 [04:45<00:00, 16.41it/s]
+
+=== Epoch 7 finish ===
+0    (Jack ) | Q(Pass/Bet)=-0.985/-0.985 | Nash=1.00/0.00 | L1=1.000 | Exploit=0.0000
+0p   (Jack ) | Q(Pass/Bet)=-0.728/0.195 | Nash=1.00/0.00 | L1=1.431 | Exploit=0.9228
+0b   (Jack ) | Q(Pass/Bet)=-0.984/0.748 | Nash=1.00/0.00 | L1=1.699 | Exploit=1.7319
+0pb  (Jack ) | Q(Pass/Bet)=-0.966/0.170 | Nash=1.00/0.00 | L1=1.514 | Exploit=1.1354
+1    (Queen) | Q(Pass/Bet)=1.170/1.170 | Nash=0.67/0.33 | L1=0.333 | Exploit=0.0000
+1p   (Queen) | Q(Pass/Bet)=-0.332/1.096 | Nash=1.00/0.00 | L1=1.613 | Exploit=1.4273
+1b   (Queen) | Q(Pass/Bet)=-0.941/0.965 | Nash=0.67/0.33 | L1=1.074 | Exploit=1.2705
+1pb  (Queen) | Q(Pass/Bet)=-1.528/-0.619 | Nash=0.67/0.33 | L1=0.759 | Exploit=0.6057
+2    (King ) | Q(Pass/Bet)=-0.984/0.978 | Nash=0.00/1.00 | L1=0.247 | Exploit=0.0000
+2p   (King ) | Q(Pass/Bet)=-0.996/0.602 | Nash=0.00/1.00 | L1=0.337 | Exploit=0.0000
+2b   (King ) | Q(Pass/Bet)=1.171/1.171 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0000
+2pb  (King ) | Q(Pass/Bet)=-0.515/1.197 | Nash=0.00/1.00 | L1=0.306 | Exploit=0.0000
+
+============================================================
+Nash Analysis: Epoch 7 finish
+L1 Deviation:  Mean=0.943  Max=1.699
+KL Divergence: Mean=0.768  Max=1.895
+Exploitability:Mean=0.5911 Max=1.7319
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 8 | Total Loss: 0.5565 | Pr Loss: 0.2933 | Adv Loss: 0.2632: 100%|█████████████████████████████████████████████████████████████████████| 4688/4688 [04:26<00:00, 17.61it/s]
+
+=== Epoch 8 finish ===
+0    (Jack ) | Q(Pass/Bet)=-0.984/-0.984 | Nash=1.00/0.00 | L1=1.000 | Exploit=0.0000
+0p   (Jack ) | Q(Pass/Bet)=-0.890/0.087 | Nash=1.00/0.00 | L1=1.453 | Exploit=0.9776
+0b   (Jack ) | Q(Pass/Bet)=-0.981/1.043 | Nash=1.00/0.00 | L1=1.767 | Exploit=2.0237
+0pb  (Jack ) | Q(Pass/Bet)=-0.987/0.809 | Nash=1.00/0.00 | L1=1.715 | Exploit=1.7965
+1    (Queen) | Q(Pass/Bet)=1.146/1.146 | Nash=0.67/0.33 | L1=0.334 | Exploit=0.0004
+1p   (Queen) | Q(Pass/Bet)=-0.331/1.076 | Nash=1.00/0.00 | L1=1.607 | Exploit=1.4069
+1b   (Queen) | Q(Pass/Bet)=-0.926/0.368 | Nash=0.67/0.33 | L1=0.903 | Exploit=0.8620
+1pb  (Queen) | Q(Pass/Bet)=-1.472/-1.061 | Nash=0.67/0.33 | L1=0.536 | Exploit=0.2743
+2    (King ) | Q(Pass/Bet)=-0.989/1.076 | Nash=0.00/1.00 | L1=0.225 | Exploit=0.0000
+2p   (King ) | Q(Pass/Bet)=-0.991/0.740 | Nash=0.00/1.00 | L1=0.301 | Exploit=0.0000
+2b   (King ) | Q(Pass/Bet)=1.192/1.192 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0000
+2pb  (King ) | Q(Pass/Bet)=-0.760/1.039 | Nash=0.00/1.00 | L1=0.284 | Exploit=0.0000
+
+============================================================
+Nash Analysis: Epoch 8 finish
+L1 Deviation:  Mean=0.927  Max=1.767
+KL Divergence: Mean=0.793  Max=2.148
+Exploitability:Mean=0.6118 Max=2.0237
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 9 | Total Loss: 0.5565 | Pr Loss: 0.2933 | Adv Loss: 0.2632: 100%|████████████████████████████████████████████████████████████████████▉| 4685/4688 [04:23<00:00, 20.21it/s]
+=== After MSE training ends ===
+0    (Jack ) | Q(Pass/Bet)=-0.985/-0.985 | Nash=1.00/0.00 | L1=1.000 | Exploit=0.0000
+0p   (Jack ) | Q(Pass/Bet)=-0.982/-0.236 | Nash=1.00/0.00 | L1=1.357 | Exploit=0.7466
+0b   (Jack ) | Q(Pass/Bet)=-1.017/0.853 | Nash=1.00/0.00 | L1=1.733 | Exploit=1.8698
+0pb  (Jack ) | Q(Pass/Bet)=-0.966/0.422 | Nash=1.00/0.00 | L1=1.601 | Exploit=1.3884
+1    (Queen) | Q(Pass/Bet)=1.148/1.148 | Nash=0.67/0.33 | L1=0.333 | Exploit=0.0000
+1p   (Queen) | Q(Pass/Bet)=-0.332/0.851 | Nash=1.00/0.00 | L1=1.531 | Exploit=1.1830
+1b   (Queen) | Q(Pass/Bet)=-0.927/0.044 | Nash=0.67/0.33 | L1=0.784 | Exploit=0.6469
+1pb  (Queen) | Q(Pass/Bet)=-0.926/-0.878 | Nash=0.67/0.33 | L1=0.357 | Exploit=0.0321
+2    (King ) | Q(Pass/Bet)=-1.000/0.600 | Nash=0.00/1.00 | L1=0.336 | Exploit=0.0000
+2p   (King ) | Q(Pass/Bet)=-0.992/0.524 | Nash=0.00/1.00 | L1=0.360 | Exploit=0.0000
+2b   (King ) | Q(Pass/Bet)=1.191/1.191 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0000
+2pb  (King ) | Q(Pass/Bet)=-0.672/0.837 | Nash=0.00/1.00 | L1=0.362 | Exploit=0.0000
+
+============================================================
+Nash Analysis: After MSE training ends
+L1 Deviation:  Mean=0.896  Max=1.733
+KL Divergence: Mean=0.719  Max=2.013
+Exploitability:Mean=0.4889 Max=1.8698
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 9 | Total Loss: 0.5565 | Pr Loss: 0.2933 | Adv Loss: 0.2632: 100%|█████████████████████████████████████████████████████████████████████| 4688/4688 [04:28<00:00, 17.46it/s]
+
+=== Epoch 9 finish ===
+0    (Jack ) | Q(Pass/Bet)=-0.985/-0.985 | Nash=1.00/0.00 | L1=1.000 | Exploit=0.0000
+0p   (Jack ) | Q(Pass/Bet)=-0.982/-0.236 | Nash=1.00/0.00 | L1=1.357 | Exploit=0.7466
+0b   (Jack ) | Q(Pass/Bet)=-1.017/0.853 | Nash=1.00/0.00 | L1=1.733 | Exploit=1.8698
+0pb  (Jack ) | Q(Pass/Bet)=-0.966/0.422 | Nash=1.00/0.00 | L1=1.601 | Exploit=1.3884
+1    (Queen) | Q(Pass/Bet)=1.148/1.148 | Nash=0.67/0.33 | L1=0.333 | Exploit=0.0000
+1p   (Queen) | Q(Pass/Bet)=-0.332/0.851 | Nash=1.00/0.00 | L1=1.531 | Exploit=1.1830
+1b   (Queen) | Q(Pass/Bet)=-0.927/0.044 | Nash=0.67/0.33 | L1=0.784 | Exploit=0.6469
+1pb  (Queen) | Q(Pass/Bet)=-0.926/-0.878 | Nash=0.67/0.33 | L1=0.357 | Exploit=0.0321
+2    (King ) | Q(Pass/Bet)=-1.000/0.600 | Nash=0.00/1.00 | L1=0.336 | Exploit=0.0000
+2p   (King ) | Q(Pass/Bet)=-0.992/0.524 | Nash=0.00/1.00 | L1=0.360 | Exploit=0.0000
+2b   (King ) | Q(Pass/Bet)=1.191/1.191 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0000
+2pb  (King ) | Q(Pass/Bet)=-0.672/0.837 | Nash=0.00/1.00 | L1=0.362 | Exploit=0.0000
+
+============================================================
+Nash Analysis: Epoch 9 finish
+L1 Deviation:  Mean=0.896  Max=1.733
+KL Divergence: Mean=0.719  Max=2.013
+Exploitability:Mean=0.4889 Max=1.8698
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 10 | Total Loss: 0.0009 | Pr Loss: 0.0009 | Adv Loss: 0.0000: 100%|████████████████████████████████████████████████████████████████████| 4688/4688 [03:14<00:00, 24.10it/s]
+
+=== Epoch 10 finish ===
+0    (Jack ) | Q(Pass/Bet)=-0.985/-0.985 | Nash=1.00/0.00 | L1=1.000 | Exploit=0.0000
+0p   (Jack ) | Q(Pass/Bet)=-0.987/-0.629 | Nash=1.00/0.00 | L1=1.177 | Exploit=0.3576
+0b   (Jack ) | Q(Pass/Bet)=-0.903/-0.644 | Nash=1.00/0.00 | L1=1.129 | Exploit=0.2590
+0pb  (Jack ) | Q(Pass/Bet)=-0.988/-0.045 | Nash=1.00/0.00 | L1=1.439 | Exploit=0.9427
+1    (Queen) | Q(Pass/Bet)=1.160/0.965 | Nash=0.67/0.33 | L1=0.236 | Exploit=0.0652
+1p   (Queen) | Q(Pass/Bet)=-0.331/0.735 | Nash=1.00/0.00 | L1=1.488 | Exploit=1.0664
+1b   (Queen) | Q(Pass/Bet)=-0.939/-0.415 | Nash=0.67/0.33 | L1=0.589 | Exploit=0.3489
+1pb  (Queen) | Q(Pass/Bet)=-0.908/-1.200 | Nash=0.67/0.33 | L1=0.188 | Exploit=0.0973
+2    (King ) | Q(Pass/Bet)=-0.985/0.172 | Nash=0.00/1.00 | L1=0.478 | Exploit=0.0000
+2p   (King ) | Q(Pass/Bet)=-0.990/-0.160 | Nash=0.00/1.00 | L1=0.607 | Exploit=0.0000
+2b   (King ) | Q(Pass/Bet)=1.161/1.161 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0000
+2pb  (King ) | Q(Pass/Bet)=-0.987/0.873 | Nash=0.00/1.00 | L1=0.269 | Exploit=0.0000
+
+============================================================
+Nash Analysis: Epoch 10 finish
+L1 Deviation:  Mean=0.800  Max=1.488
+KL Divergence: Mean=0.562  Max=1.362
+Exploitability:Mean=0.2614 Max=1.0664
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 11 | Total Loss: 0.0015 | Pr Loss: 0.0000 | Adv Loss: 0.0015: 100%|████████████████████████████████████████████████████████████████████| 4688/4688 [03:25<00:00, 22.78it/s]
+
+=== Epoch 11 finish ===
+0    (Jack ) | Q(Pass/Bet)=-0.985/-0.985 | Nash=1.00/0.00 | L1=1.000 | Exploit=0.0000
+0p   (Jack ) | Q(Pass/Bet)=-0.987/-0.629 | Nash=1.00/0.00 | L1=1.177 | Exploit=0.3576
+0b   (Jack ) | Q(Pass/Bet)=-0.903/-0.644 | Nash=1.00/0.00 | L1=1.129 | Exploit=0.2590
+0pb  (Jack ) | Q(Pass/Bet)=-0.988/-0.045 | Nash=1.00/0.00 | L1=1.439 | Exploit=0.9427
+1    (Queen) | Q(Pass/Bet)=1.160/0.965 | Nash=0.67/0.33 | L1=0.236 | Exploit=0.0652
+1p   (Queen) | Q(Pass/Bet)=-0.331/0.735 | Nash=1.00/0.00 | L1=1.488 | Exploit=1.0664
+1b   (Queen) | Q(Pass/Bet)=-0.939/-0.415 | Nash=0.67/0.33 | L1=0.589 | Exploit=0.3489
+1pb  (Queen) | Q(Pass/Bet)=-0.908/-1.200 | Nash=0.67/0.33 | L1=0.188 | Exploit=0.0973
+2    (King ) | Q(Pass/Bet)=-0.985/0.172 | Nash=0.00/1.00 | L1=0.478 | Exploit=0.0000
+2p   (King ) | Q(Pass/Bet)=-0.990/-0.160 | Nash=0.00/1.00 | L1=0.607 | Exploit=0.0000
+2b   (King ) | Q(Pass/Bet)=1.161/1.161 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0000
+2pb  (King ) | Q(Pass/Bet)=-0.987/0.873 | Nash=0.00/1.00 | L1=0.269 | Exploit=0.0000
+
+============================================================
+Nash Analysis: Epoch 11 finish
+L1 Deviation:  Mean=0.800  Max=1.488
+KL Divergence: Mean=0.562  Max=1.362
+Exploitability:Mean=0.2614 Max=1.0664
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 12 | Total Loss: 0.0008 | Pr Loss: 0.0008 | Adv Loss: 0.0000: 100%|████████████████████████████████████████████████████████████████████| 4688/4688 [03:19<00:00, 23.45it/s]
+
+=== Epoch 12 finish ===
+0    (Jack ) | Q(Pass/Bet)=-1.000/-1.664 | Nash=1.00/0.00 | L1=0.679 | Exploit=0.0000
+0p   (Jack ) | Q(Pass/Bet)=-0.948/0.617 | Nash=1.00/0.00 | L1=1.654 | Exploit=1.5652
+0b   (Jack ) | Q(Pass/Bet)=-1.195/0.952 | Nash=1.00/0.00 | L1=1.791 | Exploit=2.1470
+0pb  (Jack ) | Q(Pass/Bet)=-1.091/0.425 | Nash=1.00/0.00 | L1=1.640 | Exploit=1.5151
+1    (Queen) | Q(Pass/Bet)=1.137/1.118 | Nash=0.67/0.33 | L1=0.324 | Exploit=0.0062
+1p   (Queen) | Q(Pass/Bet)=0.774/0.915 | Nash=1.00/0.00 | L1=1.070 | Exploit=0.1408
+1b   (Queen) | Q(Pass/Bet)=-1.001/-1.076 | Nash=0.67/0.33 | L1=0.296 | Exploit=0.0252
+1pb  (Queen) | Q(Pass/Bet)=-1.222/0.617 | Nash=0.67/0.33 | L1=1.059 | Exploit=1.2261
+2    (King ) | Q(Pass/Bet)=-1.166/0.648 | Nash=0.00/1.00 | L1=0.280 | Exploit=0.0000
+2p   (King ) | Q(Pass/Bet)=-1.062/0.866 | Nash=0.00/1.00 | L1=0.254 | Exploit=0.0000
+2b   (King ) | Q(Pass/Bet)=0.980/0.980 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0000
+2pb  (King ) | Q(Pass/Bet)=-0.848/-0.433 | Nash=0.00/1.00 | L1=0.795 | Exploit=0.0000
+
+============================================================
+Nash Analysis: Epoch 12 finish
+L1 Deviation:  Mean=0.904  Max=1.791
+KL Divergence: Mean=0.769  Max=2.257
+Exploitability:Mean=0.5521 Max=2.1470
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 13 | Total Loss: 0.0006 | Pr Loss: 0.0000 | Adv Loss: 0.0006: 100%|████████████████████████████████████████████████████████████████████| 4688/4688 [03:18<00:00, 23.58it/s]
+
+=== Epoch 13 finish ===
+0    (Jack ) | Q(Pass/Bet)=-1.000/-1.664 | Nash=1.00/0.00 | L1=0.679 | Exploit=0.0000
+0p   (Jack ) | Q(Pass/Bet)=-0.948/0.617 | Nash=1.00/0.00 | L1=1.654 | Exploit=1.5652
+0b   (Jack ) | Q(Pass/Bet)=-1.195/0.952 | Nash=1.00/0.00 | L1=1.791 | Exploit=2.1470
+0pb  (Jack ) | Q(Pass/Bet)=-1.091/0.425 | Nash=1.00/0.00 | L1=1.640 | Exploit=1.5151
+1    (Queen) | Q(Pass/Bet)=1.137/1.118 | Nash=0.67/0.33 | L1=0.324 | Exploit=0.0062
+1p   (Queen) | Q(Pass/Bet)=0.774/0.915 | Nash=1.00/0.00 | L1=1.070 | Exploit=0.1408
+1b   (Queen) | Q(Pass/Bet)=-1.001/-1.076 | Nash=0.67/0.33 | L1=0.296 | Exploit=0.0252
+1pb  (Queen) | Q(Pass/Bet)=-1.222/0.617 | Nash=0.67/0.33 | L1=1.059 | Exploit=1.2261
+2    (King ) | Q(Pass/Bet)=-1.166/0.648 | Nash=0.00/1.00 | L1=0.280 | Exploit=0.0000
+2p   (King ) | Q(Pass/Bet)=-1.062/0.866 | Nash=0.00/1.00 | L1=0.254 | Exploit=0.0000
+2b   (King ) | Q(Pass/Bet)=0.980/0.980 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0000
+2pb  (King ) | Q(Pass/Bet)=-0.848/-0.433 | Nash=0.00/1.00 | L1=0.795 | Exploit=0.0000
+
+============================================================
+Nash Analysis: Epoch 13 finish
+L1 Deviation:  Mean=0.904  Max=1.791
+KL Divergence: Mean=0.769  Max=2.257
+Exploitability:Mean=0.5521 Max=2.1470
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 14 | Total Loss: 0.0008 | Pr Loss: 0.0008 | Adv Loss: 0.0000: 100%|████████████████████████████████████████████████████████████████████| 4688/4688 [03:09<00:00, 24.75it/s]
+
+=== Epoch 14 finish ===
+0    (Jack ) | Q(Pass/Bet)=-0.986/-1.653 | Nash=1.00/0.00 | L1=0.678 | Exploit=0.0000
+0p   (Jack ) | Q(Pass/Bet)=-0.924/-0.957 | Nash=1.00/0.00 | L1=0.983 | Exploit=0.0000
+0b   (Jack ) | Q(Pass/Bet)=-1.490/0.740 | Nash=1.00/0.00 | L1=1.806 | Exploit=2.2292
+0pb  (Jack ) | Q(Pass/Bet)=-1.246/-2.026 | Nash=1.00/0.00 | L1=0.628 | Exploit=0.0000
+1    (Queen) | Q(Pass/Bet)=1.953/2.022 | Nash=0.67/0.33 | L1=0.367 | Exploit=0.0454
+1p   (Queen) | Q(Pass/Bet)=1.810/1.600 | Nash=1.00/0.00 | L1=0.895 | Exploit=0.0000
+1b   (Queen) | Q(Pass/Bet)=-1.665/-1.876 | Nash=0.67/0.33 | L1=0.228 | Exploit=0.0702
+1pb  (Queen) | Q(Pass/Bet)=-1.876/-1.656 | Nash=0.67/0.33 | L1=0.443 | Exploit=0.1472
+2    (King ) | Q(Pass/Bet)=-1.436/-1.916 | Nash=0.00/1.00 | L1=1.236 | Exploit=0.4801
+2p   (King ) | Q(Pass/Bet)=-1.507/-0.234 | Nash=0.00/1.00 | L1=0.437 | Exploit=0.0000
+2b   (King ) | Q(Pass/Bet)=2.013/2.013 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0000
+2pb  (King ) | Q(Pass/Bet)=-1.772/0.363 | Nash=0.00/1.00 | L1=0.211 | Exploit=0.0000
+
+============================================================
+Nash Analysis: Epoch 14 finish
+L1 Deviation:  Mean=0.743  Max=1.806
+KL Divergence: Mean=0.550  Max=2.331
+Exploitability:Mean=0.2477 Max=2.2292
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 15 | Total Loss: 0.0008 | Pr Loss: 0.0000 | Adv Loss: 0.0008: 100%|████████████████████████████████████████████████████████████████████| 4688/4688 [03:23<00:00, 23.05it/s]
+
+=== Epoch 15 finish ===
+0    (Jack ) | Q(Pass/Bet)=-0.986/-1.653 | Nash=1.00/0.00 | L1=0.678 | Exploit=0.0000
+0p   (Jack ) | Q(Pass/Bet)=-0.924/-0.957 | Nash=1.00/0.00 | L1=0.983 | Exploit=0.0000
+0b   (Jack ) | Q(Pass/Bet)=-1.490/0.740 | Nash=1.00/0.00 | L1=1.806 | Exploit=2.2292
+0pb  (Jack ) | Q(Pass/Bet)=-1.246/-2.026 | Nash=1.00/0.00 | L1=0.628 | Exploit=0.0000
+1    (Queen) | Q(Pass/Bet)=1.953/2.022 | Nash=0.67/0.33 | L1=0.367 | Exploit=0.0454
+1p   (Queen) | Q(Pass/Bet)=1.810/1.600 | Nash=1.00/0.00 | L1=0.895 | Exploit=0.0000
+1b   (Queen) | Q(Pass/Bet)=-1.665/-1.876 | Nash=0.67/0.33 | L1=0.228 | Exploit=0.0702
+1pb  (Queen) | Q(Pass/Bet)=-1.876/-1.656 | Nash=0.67/0.33 | L1=0.443 | Exploit=0.1472
+2    (King ) | Q(Pass/Bet)=-1.436/-1.916 | Nash=0.00/1.00 | L1=1.236 | Exploit=0.4801
+2p   (King ) | Q(Pass/Bet)=-1.507/-0.234 | Nash=0.00/1.00 | L1=0.437 | Exploit=0.0000
+2b   (King ) | Q(Pass/Bet)=2.013/2.013 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0000
+2pb  (King ) | Q(Pass/Bet)=-1.772/0.363 | Nash=0.00/1.00 | L1=0.211 | Exploit=0.0000
+
+============================================================
+Nash Analysis: Epoch 15 finish
+L1 Deviation:  Mean=0.743  Max=1.806
+KL Divergence: Mean=0.550  Max=2.331
+Exploitability:Mean=0.2477 Max=2.2292
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 16 | Total Loss: 0.0011 | Pr Loss: 0.0011 | Adv Loss: 0.0000: 100%|████████████████████████████████████████████████████████████████████| 4688/4688 [03:14<00:00, 24.14it/s]
+
+=== Epoch 16 finish ===
+0    (Jack ) | Q(Pass/Bet)=-1.001/-1.694 | Nash=1.00/0.00 | L1=0.667 | Exploit=0.0000
+0p   (Jack ) | Q(Pass/Bet)=-2.292/-1.913 | Nash=1.00/0.00 | L1=1.187 | Exploit=0.3785
+0b   (Jack ) | Q(Pass/Bet)=-2.168/1.183 | Nash=1.00/0.00 | L1=1.932 | Exploit=3.3507
+0pb  (Jack ) | Q(Pass/Bet)=-1.977/-1.819 | Nash=1.00/0.00 | L1=1.079 | Exploit=0.1579
+1    (Queen) | Q(Pass/Bet)=2.232/2.280 | Nash=0.67/0.33 | L1=0.358 | Exploit=0.0326
+1p   (Queen) | Q(Pass/Bet)=2.118/1.711 | Nash=1.00/0.00 | L1=0.799 | Exploit=0.0000
+1b   (Queen) | Q(Pass/Bet)=-2.169/-3.207 | Nash=0.67/0.33 | L1=0.144 | Exploit=0.3460
+1pb  (Queen) | Q(Pass/Bet)=-3.567/-2.165 | Nash=0.67/0.33 | L1=0.938 | Exploit=0.9349
+2    (King ) | Q(Pass/Bet)=-2.306/0.600 | Nash=0.00/1.00 | L1=0.104 | Exploit=0.0000
+2p   (King ) | Q(Pass/Bet)=-2.413/0.390 | Nash=0.00/1.00 | L1=0.114 | Exploit=0.0000
+2b   (King ) | Q(Pass/Bet)=2.280/2.280 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0000
+2pb  (King ) | Q(Pass/Bet)=-2.714/1.232 | Nash=0.00/1.00 | L1=0.038 | Exploit=0.0000
+
+============================================================
+Nash Analysis: Epoch 16 finish
+L1 Deviation:  Mean=0.697  Max=1.932
+KL Divergence: Mean=0.616  Max=3.385
+Exploitability:Mean=0.4334 Max=3.3507
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 17 | Total Loss: 0.0014 | Pr Loss: 0.0000 | Adv Loss: 0.0014: 100%|████████████████████████████████████████████████████████████████████| 4688/4688 [03:23<00:00, 23.07it/s]
+
+=== Epoch 17 finish ===
+0    (Jack ) | Q(Pass/Bet)=-1.001/-1.694 | Nash=1.00/0.00 | L1=0.667 | Exploit=0.0000
+0p   (Jack ) | Q(Pass/Bet)=-2.292/-1.913 | Nash=1.00/0.00 | L1=1.187 | Exploit=0.3785
+0b   (Jack ) | Q(Pass/Bet)=-2.168/1.183 | Nash=1.00/0.00 | L1=1.932 | Exploit=3.3507
+0pb  (Jack ) | Q(Pass/Bet)=-1.977/-1.819 | Nash=1.00/0.00 | L1=1.079 | Exploit=0.1579
+1    (Queen) | Q(Pass/Bet)=2.232/2.280 | Nash=0.67/0.33 | L1=0.358 | Exploit=0.0326
+1p   (Queen) | Q(Pass/Bet)=2.118/1.711 | Nash=1.00/0.00 | L1=0.799 | Exploit=0.0000
+1b   (Queen) | Q(Pass/Bet)=-2.169/-3.207 | Nash=0.67/0.33 | L1=0.144 | Exploit=0.3460
+1pb  (Queen) | Q(Pass/Bet)=-3.567/-2.165 | Nash=0.67/0.33 | L1=0.938 | Exploit=0.9349
+2    (King ) | Q(Pass/Bet)=-2.306/0.600 | Nash=0.00/1.00 | L1=0.104 | Exploit=0.0000
+2p   (King ) | Q(Pass/Bet)=-2.413/0.390 | Nash=0.00/1.00 | L1=0.114 | Exploit=0.0000
+2b   (King ) | Q(Pass/Bet)=2.280/2.280 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0000
+2pb  (King ) | Q(Pass/Bet)=-2.714/1.232 | Nash=0.00/1.00 | L1=0.038 | Exploit=0.0000
+
+============================================================
+Nash Analysis: Epoch 17 finish
+L1 Deviation:  Mean=0.697  Max=1.932
+KL Divergence: Mean=0.616  Max=3.385
+Exploitability:Mean=0.4334 Max=3.3507
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 18 | Total Loss: 0.0015 | Pr Loss: 0.0015 | Adv Loss: 0.0000: 100%|████████████████████████████████████████████████████████████████████| 4688/4688 [03:07<00:00, 25.03it/s]
+
+=== Epoch 18 finish ===
+0    (Jack ) | Q(Pass/Bet)=-1.621/-2.057 | Nash=1.00/0.00 | L1=0.786 | Exploit=0.0000
+0p   (Jack ) | Q(Pass/Bet)=-3.518/1.683 | Nash=1.00/0.00 | L1=1.989 | Exploit=5.2010
+0b   (Jack ) | Q(Pass/Bet)=-3.269/2.305 | Nash=1.00/0.00 | L1=1.992 | Exploit=5.5737
+0pb  (Jack ) | Q(Pass/Bet)=-3.042/0.108 | Nash=1.00/0.00 | L1=1.918 | Exploit=3.1495
+1    (Queen) | Q(Pass/Bet)=2.129/2.029 | Nash=0.67/0.33 | L1=0.284 | Exploit=0.0332
+1p   (Queen) | Q(Pass/Bet)=2.597/2.309 | Nash=1.00/0.00 | L1=0.857 | Exploit=0.0000
+1b   (Queen) | Q(Pass/Bet)=-3.219/-3.792 | Nash=0.67/0.33 | L1=0.055 | Exploit=0.1907
+1pb  (Queen) | Q(Pass/Bet)=-4.353/-3.257 | Nash=0.67/0.33 | L1=0.832 | Exploit=0.7302
+2    (King ) | Q(Pass/Bet)=-3.053/1.990 | Nash=0.00/1.00 | L1=0.013 | Exploit=0.0000
+2p   (King ) | Q(Pass/Bet)=-3.476/2.352 | Nash=0.00/1.00 | L1=0.006 | Exploit=0.0000
+2b   (King ) | Q(Pass/Bet)=2.643/2.643 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0000
+2pb  (King ) | Q(Pass/Bet)=-1.814/1.042 | Nash=0.00/1.00 | L1=0.109 | Exploit=0.0000
+
+============================================================
+Nash Analysis: Epoch 18 finish
+L1 Deviation:  Mean=0.820  Max=1.992
+KL Divergence: Mean=1.351  Max=5.577
+Exploitability:Mean=1.2399 Max=5.5737
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 19 | Total Loss: 0.0017 | Pr Loss: 0.0000 | Adv Loss: 0.0017: 100%|████████████████████████████████████████████████████████████████████| 4688/4688 [03:07<00:00, 24.96it/s]
+
+=== Epoch 19 finish ===
+0    (Jack ) | Q(Pass/Bet)=-1.621/-2.057 | Nash=1.00/0.00 | L1=0.786 | Exploit=0.0000
+0p   (Jack ) | Q(Pass/Bet)=-3.518/1.683 | Nash=1.00/0.00 | L1=1.989 | Exploit=5.2010
+0b   (Jack ) | Q(Pass/Bet)=-3.269/2.305 | Nash=1.00/0.00 | L1=1.992 | Exploit=5.5737
+0pb  (Jack ) | Q(Pass/Bet)=-3.042/0.108 | Nash=1.00/0.00 | L1=1.918 | Exploit=3.1495
+1    (Queen) | Q(Pass/Bet)=2.129/2.029 | Nash=0.67/0.33 | L1=0.284 | Exploit=0.0332
+1p   (Queen) | Q(Pass/Bet)=2.597/2.309 | Nash=1.00/0.00 | L1=0.857 | Exploit=0.0000
+1b   (Queen) | Q(Pass/Bet)=-3.219/-3.792 | Nash=0.67/0.33 | L1=0.055 | Exploit=0.1907
+1pb  (Queen) | Q(Pass/Bet)=-4.353/-3.257 | Nash=0.67/0.33 | L1=0.832 | Exploit=0.7302
+2    (King ) | Q(Pass/Bet)=-3.053/1.990 | Nash=0.00/1.00 | L1=0.013 | Exploit=0.0000
+2p   (King ) | Q(Pass/Bet)=-3.476/2.352 | Nash=0.00/1.00 | L1=0.006 | Exploit=0.0000
+2b   (King ) | Q(Pass/Bet)=2.643/2.643 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0000
+2pb  (King ) | Q(Pass/Bet)=-1.814/1.042 | Nash=0.00/1.00 | L1=0.109 | Exploit=0.0000
+
+============================================================
+Nash Analysis: Epoch 19 finish
+L1 Deviation:  Mean=0.820  Max=1.992
+KL Divergence: Mean=1.351  Max=5.577
+Exploitability:Mean=1.2399 Max=5.5737
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 20 | Total Loss: 0.0017 | Pr Loss: 0.0017 | Adv Loss: 0.0000: 100%|████████████████████████████████████████████████████████████████████| 4688/4688 [03:09<00:00, 24.72it/s]
+
+=== Epoch 20 finish ===
+0    (Jack ) | Q(Pass/Bet)=-3.595/-2.603 | Nash=1.00/0.00 | L1=1.459 | Exploit=0.9922
+0p   (Jack ) | Q(Pass/Bet)=-3.246/-1.436 | Nash=1.00/0.00 | L1=1.719 | Exploit=1.8105
+0b   (Jack ) | Q(Pass/Bet)=-2.440/1.015 | Nash=1.00/0.00 | L1=1.939 | Exploit=3.4553
+0pb  (Jack ) | Q(Pass/Bet)=-3.364/-0.119 | Nash=1.00/0.00 | L1=1.925 | Exploit=3.2456
+1    (Queen) | Q(Pass/Bet)=1.733/1.885 | Nash=0.67/0.33 | L1=0.409 | Exploit=0.1016
+1p   (Queen) | Q(Pass/Bet)=1.467/0.921 | Nash=1.00/0.00 | L1=0.734 | Exploit=0.0000
+1b   (Queen) | Q(Pass/Bet)=-1.796/-2.359 | Nash=0.67/0.33 | L1=0.059 | Exploit=0.1875
+1pb  (Queen) | Q(Pass/Bet)=-2.447/-1.396 | Nash=0.67/0.33 | L1=0.815 | Exploit=0.7009
+2    (King ) | Q(Pass/Bet)=-1.703/0.850 | Nash=0.00/1.00 | L1=0.144 | Exploit=0.0000
+2p   (King ) | Q(Pass/Bet)=-1.879/1.671 | Nash=0.00/1.00 | L1=0.056 | Exploit=0.0000
+2b   (King ) | Q(Pass/Bet)=1.731/1.731 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0000
+2pb  (King ) | Q(Pass/Bet)=0.114/3.008 | Nash=0.00/1.00 | L1=0.105 | Exploit=0.0000
+
+============================================================
+Nash Analysis: Epoch 20 finish
+L1 Deviation:  Mean=0.864  Max=1.939
+KL Divergence: Mean=0.983  Max=3.486
+Exploitability:Mean=0.8745 Max=3.4553
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 21 | Total Loss: 0.0034 | Pr Loss: 0.0000 | Adv Loss: 0.0034: 100%|████████████████████████████████████████████████████████████████████| 4688/4688 [03:18<00:00, 23.62it/s]
+
+=== Epoch 21 finish ===
+0    (Jack ) | Q(Pass/Bet)=-3.595/-2.603 | Nash=1.00/0.00 | L1=1.459 | Exploit=0.9922
+0p   (Jack ) | Q(Pass/Bet)=-3.246/-1.436 | Nash=1.00/0.00 | L1=1.719 | Exploit=1.8105
+0b   (Jack ) | Q(Pass/Bet)=-2.440/1.015 | Nash=1.00/0.00 | L1=1.939 | Exploit=3.4553
+0pb  (Jack ) | Q(Pass/Bet)=-3.364/-0.119 | Nash=1.00/0.00 | L1=1.925 | Exploit=3.2456
+1    (Queen) | Q(Pass/Bet)=1.733/1.885 | Nash=0.67/0.33 | L1=0.409 | Exploit=0.1016
+1p   (Queen) | Q(Pass/Bet)=1.467/0.921 | Nash=1.00/0.00 | L1=0.734 | Exploit=0.0000
+1b   (Queen) | Q(Pass/Bet)=-1.796/-2.359 | Nash=0.67/0.33 | L1=0.059 | Exploit=0.1875
+1pb  (Queen) | Q(Pass/Bet)=-2.447/-1.396 | Nash=0.67/0.33 | L1=0.815 | Exploit=0.7009
+2    (King ) | Q(Pass/Bet)=-1.703/0.850 | Nash=0.00/1.00 | L1=0.144 | Exploit=0.0000
+2p   (King ) | Q(Pass/Bet)=-1.879/1.671 | Nash=0.00/1.00 | L1=0.056 | Exploit=0.0000
+2b   (King ) | Q(Pass/Bet)=1.731/1.731 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0000
+2pb  (King ) | Q(Pass/Bet)=0.114/3.008 | Nash=0.00/1.00 | L1=0.105 | Exploit=0.0000
+
+============================================================
+Nash Analysis: Epoch 21 finish
+L1 Deviation:  Mean=0.864  Max=1.939
+KL Divergence: Mean=0.983  Max=3.486
+Exploitability:Mean=0.8745 Max=3.4553
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 22 | Total Loss: 0.0011 | Pr Loss: 0.0011 | Adv Loss: 0.0000: 100%|████████████████████████████████████████████████████████████████████| 4688/4688 [03:13<00:00, 24.26it/s]
+
+=== Epoch 22 finish ===
+0    (Jack ) | Q(Pass/Bet)=-2.598/-1.373 | Nash=1.00/0.00 | L1=1.546 | Exploit=1.2251
+0p   (Jack ) | Q(Pass/Bet)=-1.498/-2.368 | Nash=1.00/0.00 | L1=0.591 | Exploit=0.0000
+0b   (Jack ) | Q(Pass/Bet)=-2.209/1.764 | Nash=1.00/0.00 | L1=1.963 | Exploit=3.9727
+0pb  (Jack ) | Q(Pass/Bet)=-2.065/-2.149 | Nash=1.00/0.00 | L1=0.958 | Exploit=0.0000
+1    (Queen) | Q(Pass/Bet)=3.595/4.275 | Nash=0.67/0.33 | L1=0.661 | Exploit=0.4535
+1p   (Queen) | Q(Pass/Bet)=2.366/2.085 | Nash=1.00/0.00 | L1=0.860 | Exploit=0.0000
+1b   (Queen) | Q(Pass/Bet)=-1.387/-1.507 | Nash=0.67/0.33 | L1=0.273 | Exploit=0.0401
+1pb  (Queen) | Q(Pass/Bet)=-2.516/-0.611 | Nash=0.67/0.33 | L1=1.074 | Exploit=1.2700
+2    (King ) | Q(Pass/Bet)=-2.399/0.990 | Nash=0.00/1.00 | L1=0.065 | Exploit=0.0000
+2p   (King ) | Q(Pass/Bet)=-2.075/-0.857 | Nash=0.00/1.00 | L1=0.456 | Exploit=0.0000
+2b   (King ) | Q(Pass/Bet)=4.248/4.248 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0000
+2pb  (King ) | Q(Pass/Bet)=-0.882/3.699 | Nash=0.00/1.00 | L1=0.020 | Exploit=0.0000
+
+============================================================
+Nash Analysis: Epoch 22 finish
+L1 Deviation:  Mean=0.789  Max=1.963
+KL Divergence: Mean=0.756  Max=3.991
+Exploitability:Mean=0.5801 Max=3.9727
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 23 | Total Loss: 0.0025 | Pr Loss: 0.0000 | Adv Loss: 0.0025: 100%|████████████████████████████████████████████████████████████████████| 4688/4688 [03:12<00:00, 24.41it/s]
+
+=== Epoch 23 finish ===
+0    (Jack ) | Q(Pass/Bet)=-2.598/-1.373 | Nash=1.00/0.00 | L1=1.546 | Exploit=1.2251
+0p   (Jack ) | Q(Pass/Bet)=-1.498/-2.368 | Nash=1.00/0.00 | L1=0.591 | Exploit=0.0000
+0b   (Jack ) | Q(Pass/Bet)=-2.209/1.764 | Nash=1.00/0.00 | L1=1.963 | Exploit=3.9727
+0pb  (Jack ) | Q(Pass/Bet)=-2.065/-2.149 | Nash=1.00/0.00 | L1=0.958 | Exploit=0.0000
+1    (Queen) | Q(Pass/Bet)=3.595/4.275 | Nash=0.67/0.33 | L1=0.661 | Exploit=0.4535
+1p   (Queen) | Q(Pass/Bet)=2.366/2.085 | Nash=1.00/0.00 | L1=0.860 | Exploit=0.0000
+1b   (Queen) | Q(Pass/Bet)=-1.387/-1.507 | Nash=0.67/0.33 | L1=0.273 | Exploit=0.0401
+1pb  (Queen) | Q(Pass/Bet)=-2.516/-0.611 | Nash=0.67/0.33 | L1=1.074 | Exploit=1.2700
+2    (King ) | Q(Pass/Bet)=-2.399/0.990 | Nash=0.00/1.00 | L1=0.065 | Exploit=0.0000
+2p   (King ) | Q(Pass/Bet)=-2.075/-0.857 | Nash=0.00/1.00 | L1=0.456 | Exploit=0.0000
+2b   (King ) | Q(Pass/Bet)=4.248/4.248 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0000
+2pb  (King ) | Q(Pass/Bet)=-0.882/3.699 | Nash=0.00/1.00 | L1=0.020 | Exploit=0.0000
+
+============================================================
+Nash Analysis: Epoch 23 finish
+L1 Deviation:  Mean=0.789  Max=1.963
+KL Divergence: Mean=0.756  Max=3.991
+Exploitability:Mean=0.5801 Max=3.9727
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 24 | Total Loss: 0.0050 | Pr Loss: 0.0050 | Adv Loss: 0.0000: 100%|████████████████████████████████████████████████████████████████████| 4688/4688 [02:53<00:00, 26.95it/s]
+
+=== Epoch 24 finish ===
+0    (Jack ) | Q(Pass/Bet)=-0.841/-0.841 | Nash=1.00/0.00 | L1=1.000 | Exploit=0.0000
+0p   (Jack ) | Q(Pass/Bet)=-2.223/-1.641 | Nash=1.00/0.00 | L1=1.283 | Exploit=0.5820
+0b   (Jack ) | Q(Pass/Bet)=-1.218/-2.258 | Nash=1.00/0.00 | L1=0.523 | Exploit=0.0000
+0pb  (Jack ) | Q(Pass/Bet)=-1.634/-1.373 | Nash=1.00/0.00 | L1=1.130 | Exploit=0.2611
+1    (Queen) | Q(Pass/Bet)=4.344/4.400 | Nash=0.67/0.33 | L1=0.361 | Exploit=0.0371
+1p   (Queen) | Q(Pass/Bet)=4.039/1.552 | Nash=1.00/0.00 | L1=0.154 | Exploit=0.0000
+1b   (Queen) | Q(Pass/Bet)=-2.560/-1.407 | Nash=0.67/0.33 | L1=0.853 | Exploit=0.7685
+1pb  (Queen) | Q(Pass/Bet)=-0.491/-2.971 | Nash=0.67/0.33 | L1=0.512 | Exploit=0.8267
+2    (King ) | Q(Pass/Bet)=-2.007/0.967 | Nash=0.00/1.00 | L1=0.097 | Exploit=0.0000
+2p   (King ) | Q(Pass/Bet)=-1.916/-1.020 | Nash=0.00/1.00 | L1=0.580 | Exploit=0.0000
+2b   (King ) | Q(Pass/Bet)=4.400/4.400 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0000
+2pb  (King ) | Q(Pass/Bet)=-2.672/2.176 | Nash=0.00/1.00 | L1=0.016 | Exploit=0.0000
+
+============================================================
+Nash Analysis: Epoch 24 finish
+L1 Deviation:  Mean=0.626  Max=1.283
+KL Divergence: Mean=0.398  Max=1.026
+Exploitability:Mean=0.2063 Max=0.8267
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 25 | Total Loss: 0.0009 | Pr Loss: 0.0000 | Adv Loss: 0.0009: 100%|████████████████████████████████████████████████████████████████████| 4688/4688 [03:30<00:00, 22.30it/s]
+
+=== Epoch 25 finish ===
+0    (Jack ) | Q(Pass/Bet)=-0.841/-0.841 | Nash=1.00/0.00 | L1=1.000 | Exploit=0.0000
+0p   (Jack ) | Q(Pass/Bet)=-2.223/-1.641 | Nash=1.00/0.00 | L1=1.283 | Exploit=0.5820
+0b   (Jack ) | Q(Pass/Bet)=-1.218/-2.258 | Nash=1.00/0.00 | L1=0.523 | Exploit=0.0000
+0pb  (Jack ) | Q(Pass/Bet)=-1.634/-1.373 | Nash=1.00/0.00 | L1=1.130 | Exploit=0.2611
+1    (Queen) | Q(Pass/Bet)=4.344/4.400 | Nash=0.67/0.33 | L1=0.361 | Exploit=0.0371
+1p   (Queen) | Q(Pass/Bet)=4.039/1.552 | Nash=1.00/0.00 | L1=0.154 | Exploit=0.0000
+1b   (Queen) | Q(Pass/Bet)=-2.560/-1.407 | Nash=0.67/0.33 | L1=0.853 | Exploit=0.7685
+1pb  (Queen) | Q(Pass/Bet)=-0.491/-2.971 | Nash=0.67/0.33 | L1=0.512 | Exploit=0.8267
+2    (King ) | Q(Pass/Bet)=-2.007/0.967 | Nash=0.00/1.00 | L1=0.097 | Exploit=0.0000
+2p   (King ) | Q(Pass/Bet)=-1.916/-1.020 | Nash=0.00/1.00 | L1=0.580 | Exploit=0.0000
+2b   (King ) | Q(Pass/Bet)=4.400/4.400 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0000
+2pb  (King ) | Q(Pass/Bet)=-2.672/2.176 | Nash=0.00/1.00 | L1=0.016 | Exploit=0.0000
+
+============================================================
+Nash Analysis: Epoch 25 finish
+L1 Deviation:  Mean=0.626  Max=1.283
+KL Divergence: Mean=0.398  Max=1.026
+Exploitability:Mean=0.2063 Max=0.8267
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 26 | Total Loss: 0.0030 | Pr Loss: 0.0030 | Adv Loss: 0.0000: 100%|████████████████████████████████████████████████████████████████████| 4688/4688 [05:37<00:00, 13.87it/s]
+
+=== Epoch 26 finish ===
+0    (Jack ) | Q(Pass/Bet)=-1.330/-1.330 | Nash=1.00/0.00 | L1=1.000 | Exploit=0.0000
+0p   (Jack ) | Q(Pass/Bet)=-2.856/-2.139 | Nash=1.00/0.00 | L1=1.344 | Exploit=0.7174
+0b   (Jack ) | Q(Pass/Bet)=-3.048/-1.729 | Nash=1.00/0.00 | L1=1.578 | Exploit=1.3195
+0pb  (Jack ) | Q(Pass/Bet)=-2.765/-2.682 | Nash=1.00/0.00 | L1=1.041 | Exploit=0.0827
+1    (Queen) | Q(Pass/Bet)=2.561/1.841 | Nash=0.67/0.33 | L1=0.012 | Exploit=0.2400
+1p   (Queen) | Q(Pass/Bet)=1.674/1.738 | Nash=1.00/0.00 | L1=1.032 | Exploit=0.0639
+1b   (Queen) | Q(Pass/Bet)=-3.308/-1.530 | Nash=0.67/0.33 | L1=1.044 | Exploit=1.1853
+1pb  (Queen) | Q(Pass/Bet)=-2.323/-3.177 | Nash=0.67/0.33 | L1=0.069 | Exploit=0.2845
+2    (King ) | Q(Pass/Bet)=-1.529/1.040 | Nash=0.00/1.00 | L1=0.142 | Exploit=0.0000
+2p   (King ) | Q(Pass/Bet)=-1.724/-0.231 | Nash=0.00/1.00 | L1=0.367 | Exploit=0.0000
+2b   (King ) | Q(Pass/Bet)=2.579/2.579 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0000
+2pb  (King ) | Q(Pass/Bet)=-2.328/0.902 | Nash=0.00/1.00 | L1=0.076 | Exploit=0.0000
+
+============================================================
+Nash Analysis: Epoch 26 finish
+L1 Deviation:  Mean=0.726  Max=1.578
+KL Divergence: Mean=0.545  Max=1.556
+Exploitability:Mean=0.3244 Max=1.3195
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 27 | Total Loss: 0.0009 | Pr Loss: 0.0000 | Adv Loss: 0.0009: 100%|████████████████████████████████████████████████████████████████████| 4688/4688 [02:59<00:00, 26.17it/s]
+
+=== Epoch 27 finish ===
+0    (Jack ) | Q(Pass/Bet)=-1.330/-1.330 | Nash=1.00/0.00 | L1=1.000 | Exploit=0.0000
+0p   (Jack ) | Q(Pass/Bet)=-2.856/-2.139 | Nash=1.00/0.00 | L1=1.344 | Exploit=0.7174
+0b   (Jack ) | Q(Pass/Bet)=-3.048/-1.729 | Nash=1.00/0.00 | L1=1.578 | Exploit=1.3195
+0pb  (Jack ) | Q(Pass/Bet)=-2.765/-2.682 | Nash=1.00/0.00 | L1=1.041 | Exploit=0.0827
+1    (Queen) | Q(Pass/Bet)=2.561/1.841 | Nash=0.67/0.33 | L1=0.012 | Exploit=0.2400
+1p   (Queen) | Q(Pass/Bet)=1.674/1.738 | Nash=1.00/0.00 | L1=1.032 | Exploit=0.0639
+1b   (Queen) | Q(Pass/Bet)=-3.308/-1.530 | Nash=0.67/0.33 | L1=1.044 | Exploit=1.1853
+1pb  (Queen) | Q(Pass/Bet)=-2.323/-3.177 | Nash=0.67/0.33 | L1=0.069 | Exploit=0.2845
+2    (King ) | Q(Pass/Bet)=-1.529/1.040 | Nash=0.00/1.00 | L1=0.142 | Exploit=0.0000
+2p   (King ) | Q(Pass/Bet)=-1.724/-0.231 | Nash=0.00/1.00 | L1=0.367 | Exploit=0.0000
+2b   (King ) | Q(Pass/Bet)=2.579/2.579 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0000
+2pb  (King ) | Q(Pass/Bet)=-2.328/0.902 | Nash=0.00/1.00 | L1=0.076 | Exploit=0.0000
+
+============================================================
+Nash Analysis: Epoch 27 finish
+L1 Deviation:  Mean=0.726  Max=1.578
+KL Divergence: Mean=0.545  Max=1.556
+Exploitability:Mean=0.3244 Max=1.3195
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 28 | Total Loss: 0.0020 | Pr Loss: 0.0020 | Adv Loss: 0.0000: 100%|████████████████████████████████████████████████████████████████████| 4688/4688 [02:58<00:00, 26.21it/s]
+
+=== Epoch 28 finish ===
+0    (Jack ) | Q(Pass/Bet)=-2.878/-2.878 | Nash=1.00/0.00 | L1=1.000 | Exploit=0.0000
+0p   (Jack ) | Q(Pass/Bet)=-4.012/-1.956 | Nash=1.00/0.00 | L1=1.773 | Exploit=2.0565
+0b   (Jack ) | Q(Pass/Bet)=-4.214/-0.356 | Nash=1.00/0.00 | L1=1.959 | Exploit=3.8581
+0pb  (Jack ) | Q(Pass/Bet)=-2.111/-1.726 | Nash=1.00/0.00 | L1=1.190 | Exploit=0.3856
+1    (Queen) | Q(Pass/Bet)=2.368/2.494 | Nash=0.67/0.33 | L1=0.396 | Exploit=0.0843
+1p   (Queen) | Q(Pass/Bet)=0.639/2.114 | Nash=1.00/0.00 | L1=1.628 | Exploit=1.4749
+1b   (Queen) | Q(Pass/Bet)=-3.255/-2.772 | Nash=0.67/0.33 | L1=0.570 | Exploit=0.3215
+1pb  (Queen) | Q(Pass/Bet)=-4.462/-1.507 | Nash=0.67/0.33 | L1=1.234 | Exploit=1.9698
+2    (King ) | Q(Pass/Bet)=-0.369/1.386 | Nash=0.00/1.00 | L1=0.295 | Exploit=0.0000
+2p   (King ) | Q(Pass/Bet)=-1.474/1.206 | Nash=0.00/1.00 | L1=0.128 | Exploit=0.0000
+2b   (King ) | Q(Pass/Bet)=2.703/2.703 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0000
+2pb  (King ) | Q(Pass/Bet)=-1.696/1.288 | Nash=0.00/1.00 | L1=0.096 | Exploit=0.0000
+
+============================================================
+Nash Analysis: Epoch 28 finish
+L1 Deviation:  Mean=0.939  Max=1.959
+KL Divergence: Mean=0.994  Max=3.879
+Exploitability:Mean=0.8459 Max=3.8581
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 29 | Total Loss: 0.0011 | Pr Loss: 0.0000 | Adv Loss: 0.0011: 100%|████████████████████████████████████████████████████████████████████| 4688/4688 [18:32<00:00,  4.21it/s]
+
+=== Epoch 29 finish ===
+0    (Jack ) | Q(Pass/Bet)=-2.878/-2.878 | Nash=1.00/0.00 | L1=1.000 | Exploit=0.0000
+0p   (Jack ) | Q(Pass/Bet)=-4.012/-1.956 | Nash=1.00/0.00 | L1=1.773 | Exploit=2.0565
+0b   (Jack ) | Q(Pass/Bet)=-4.214/-0.356 | Nash=1.00/0.00 | L1=1.959 | Exploit=3.8581
+0pb  (Jack ) | Q(Pass/Bet)=-2.111/-1.726 | Nash=1.00/0.00 | L1=1.190 | Exploit=0.3856
+1    (Queen) | Q(Pass/Bet)=2.368/2.494 | Nash=0.67/0.33 | L1=0.396 | Exploit=0.0843
+1p   (Queen) | Q(Pass/Bet)=0.639/2.114 | Nash=1.00/0.00 | L1=1.628 | Exploit=1.4749
+1b   (Queen) | Q(Pass/Bet)=-3.255/-2.772 | Nash=0.67/0.33 | L1=0.570 | Exploit=0.3215
+1pb  (Queen) | Q(Pass/Bet)=-4.462/-1.507 | Nash=0.67/0.33 | L1=1.234 | Exploit=1.9698
+2    (King ) | Q(Pass/Bet)=-0.369/1.386 | Nash=0.00/1.00 | L1=0.295 | Exploit=0.0000
+2p   (King ) | Q(Pass/Bet)=-1.474/1.206 | Nash=0.00/1.00 | L1=0.128 | Exploit=0.0000
+2b   (King ) | Q(Pass/Bet)=2.703/2.703 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0000
+2pb  (King ) | Q(Pass/Bet)=-1.696/1.288 | Nash=0.00/1.00 | L1=0.096 | Exploit=0.0000
+
+============================================================
+Nash Analysis: Epoch 29 finish
+L1 Deviation:  Mean=0.939  Max=1.959
+KL Divergence: Mean=0.994  Max=3.879
+Exploitability:Mean=0.8459 Max=3.8581
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 30 | Total Loss: 0.0015 | Pr Loss: 0.0015 | Adv Loss: 0.0000: 100%|████████████████████████████████████████████████████████████████████| 4688/4688 [03:06<00:00, 25.15it/s]
+
+=== Epoch 30 finish ===
+0    (Jack ) | Q(Pass/Bet)=-3.555/-5.208 | Nash=1.00/0.00 | L1=0.321 | Exploit=0.0000
+0p   (Jack ) | Q(Pass/Bet)=-3.174/-2.396 | Nash=1.00/0.00 | L1=1.371 | Exploit=0.7781
+0b   (Jack ) | Q(Pass/Bet)=-3.003/-0.585 | Nash=1.00/0.00 | L1=1.836 | Exploit=2.4176
+0pb  (Jack ) | Q(Pass/Bet)=-3.522/-4.823 | Nash=1.00/0.00 | L1=0.428 | Exploit=0.0000
+1    (Queen) | Q(Pass/Bet)=0.827/1.150 | Nash=0.67/0.33 | L1=0.493 | Exploit=0.2153
+1p   (Queen) | Q(Pass/Bet)=0.417/-0.126 | Nash=1.00/0.00 | L1=0.735 | Exploit=0.0000
+1b   (Queen) | Q(Pass/Bet)=-2.127/-2.377 | Nash=0.67/0.33 | L1=0.209 | Exploit=0.0833
+1pb  (Queen) | Q(Pass/Bet)=-2.456/-2.003 | Nash=0.67/0.33 | L1=0.556 | Exploit=0.3025
+2    (King ) | Q(Pass/Bet)=-2.484/1.039 | Nash=0.00/1.00 | L1=0.057 | Exploit=0.0000
+2p   (King ) | Q(Pass/Bet)=-2.938/-0.109 | Nash=0.00/1.00 | L1=0.112 | Exploit=0.0000
+2b   (King ) | Q(Pass/Bet)=1.183/1.169 | Nash=0.00/1.00 | L1=1.007 | Exploit=0.0147
+2pb  (King ) | Q(Pass/Bet)=-0.367/1.585 | Nash=0.00/1.00 | L1=0.249 | Exploit=0.0000
+
+============================================================
+Nash Analysis: Epoch 30 finish
+L1 Deviation:  Mean=0.615  Max=1.836
+KL Divergence: Mean=0.480  Max=2.503
+Exploitability:Mean=0.3176 Max=2.4176
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 31 | Total Loss: 0.0019 | Pr Loss: 0.0000 | Adv Loss: 0.0019: 100%|████████████████████████████████████████████████████████████████████| 4688/4688 [03:36<00:00, 21.69it/s]
+
+=== Epoch 31 finish ===
+0    (Jack ) | Q(Pass/Bet)=-3.555/-5.208 | Nash=1.00/0.00 | L1=0.321 | Exploit=0.0000
+0p   (Jack ) | Q(Pass/Bet)=-3.174/-2.396 | Nash=1.00/0.00 | L1=1.371 | Exploit=0.7781
+0b   (Jack ) | Q(Pass/Bet)=-3.003/-0.585 | Nash=1.00/0.00 | L1=1.836 | Exploit=2.4176
+0pb  (Jack ) | Q(Pass/Bet)=-3.522/-4.823 | Nash=1.00/0.00 | L1=0.428 | Exploit=0.0000
+1    (Queen) | Q(Pass/Bet)=0.827/1.150 | Nash=0.67/0.33 | L1=0.493 | Exploit=0.2153
+1p   (Queen) | Q(Pass/Bet)=0.417/-0.126 | Nash=1.00/0.00 | L1=0.735 | Exploit=0.0000
+1b   (Queen) | Q(Pass/Bet)=-2.127/-2.377 | Nash=0.67/0.33 | L1=0.209 | Exploit=0.0833
+1pb  (Queen) | Q(Pass/Bet)=-2.456/-2.003 | Nash=0.67/0.33 | L1=0.556 | Exploit=0.3025
+2    (King ) | Q(Pass/Bet)=-2.484/1.039 | Nash=0.00/1.00 | L1=0.057 | Exploit=0.0000
+2p   (King ) | Q(Pass/Bet)=-2.938/-0.109 | Nash=0.00/1.00 | L1=0.112 | Exploit=0.0000
+2b   (King ) | Q(Pass/Bet)=1.183/1.169 | Nash=0.00/1.00 | L1=1.007 | Exploit=0.0147
+2pb  (King ) | Q(Pass/Bet)=-0.367/1.585 | Nash=0.00/1.00 | L1=0.249 | Exploit=0.0000
+
+============================================================
+Nash Analysis: Epoch 31 finish
+L1 Deviation:  Mean=0.615  Max=1.836
+KL Divergence: Mean=0.480  Max=2.503
+Exploitability:Mean=0.3176 Max=2.4176
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 32 | Total Loss: 0.0082 | Pr Loss: 0.0082 | Adv Loss: 0.0000: 100%|████████████████████████████████████████████████████████████████████| 4688/4688 [03:37<00:00, 21.56it/s]
+
+=== Epoch 32 finish ===
+0    (Jack ) | Q(Pass/Bet)=-3.461/-4.276 | Nash=1.00/0.00 | L1=0.614 | Exploit=0.0000
+0p   (Jack ) | Q(Pass/Bet)=-6.016/-4.670 | Nash=1.00/0.00 | L1=1.587 | Exploit=1.3459
+0b   (Jack ) | Q(Pass/Bet)=-5.933/-3.559 | Nash=1.00/0.00 | L1=1.830 | Exploit=2.3737
+0pb  (Jack ) | Q(Pass/Bet)=-4.760/-5.556 | Nash=1.00/0.00 | L1=0.622 | Exploit=0.0000
+1    (Queen) | Q(Pass/Bet)=-2.820/-2.710 | Nash=0.67/0.33 | L1=0.388 | Exploit=0.0731
+1p   (Queen) | Q(Pass/Bet)=1.465/-2.608 | Nash=1.00/0.00 | L1=0.033 | Exploit=0.0000
+1b   (Queen) | Q(Pass/Bet)=-5.182/-4.148 | Nash=0.67/0.33 | L1=0.809 | Exploit=0.6894
+1pb  (Queen) | Q(Pass/Bet)=-5.622/-5.450 | Nash=0.67/0.33 | L1=0.419 | Exploit=0.1150
+2    (King ) | Q(Pass/Bet)=-1.678/1.385 | Nash=0.00/1.00 | L1=0.089 | Exploit=0.0000
+2p   (King ) | Q(Pass/Bet)=-5.833/-4.277 | Nash=0.00/1.00 | L1=0.348 | Exploit=0.0000
+2b   (King ) | Q(Pass/Bet)=0.822/0.822 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0001
+2pb  (King ) | Q(Pass/Bet)=-5.306/-3.043 | Nash=0.00/1.00 | L1=0.189 | Exploit=0.0000
+
+============================================================
+Nash Analysis: Epoch 32 finish
+L1 Deviation:  Mean=0.661  Max=1.830
+KL Divergence: Mean=0.529  Max=2.463
+Exploitability:Mean=0.3831 Max=2.3737
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 33 | Total Loss: 0.0005 | Pr Loss: 0.0000 | Adv Loss: 0.0005: 100%|████████████████████████████████████████████████████████████████████| 4688/4688 [03:48<00:00, 20.55it/s]
+
+=== Epoch 33 finish ===
+0    (Jack ) | Q(Pass/Bet)=-3.461/-4.276 | Nash=1.00/0.00 | L1=0.614 | Exploit=0.0000
+0p   (Jack ) | Q(Pass/Bet)=-6.016/-4.670 | Nash=1.00/0.00 | L1=1.587 | Exploit=1.3459
+0b   (Jack ) | Q(Pass/Bet)=-5.933/-3.559 | Nash=1.00/0.00 | L1=1.830 | Exploit=2.3737
+0pb  (Jack ) | Q(Pass/Bet)=-4.760/-5.556 | Nash=1.00/0.00 | L1=0.622 | Exploit=0.0000
+1    (Queen) | Q(Pass/Bet)=-2.820/-2.710 | Nash=0.67/0.33 | L1=0.388 | Exploit=0.0731
+1p   (Queen) | Q(Pass/Bet)=1.465/-2.608 | Nash=1.00/0.00 | L1=0.033 | Exploit=0.0000
+1b   (Queen) | Q(Pass/Bet)=-5.182/-4.148 | Nash=0.67/0.33 | L1=0.809 | Exploit=0.6894
+1pb  (Queen) | Q(Pass/Bet)=-5.622/-5.450 | Nash=0.67/0.33 | L1=0.419 | Exploit=0.1150
+2    (King ) | Q(Pass/Bet)=-1.678/1.385 | Nash=0.00/1.00 | L1=0.089 | Exploit=0.0000
+2p   (King ) | Q(Pass/Bet)=-5.833/-4.277 | Nash=0.00/1.00 | L1=0.348 | Exploit=0.0000
+2b   (King ) | Q(Pass/Bet)=0.822/0.822 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0001
+2pb  (King ) | Q(Pass/Bet)=-5.306/-3.043 | Nash=0.00/1.00 | L1=0.189 | Exploit=0.0000
+
+============================================================
+Nash Analysis: Epoch 33 finish
+L1 Deviation:  Mean=0.661  Max=1.830
+KL Divergence: Mean=0.529  Max=2.463
+Exploitability:Mean=0.3831 Max=2.3737
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 34 | Total Loss: 0.0055 | Pr Loss: 0.0055 | Adv Loss: 0.0000: 100%|████████████████████████████████████████████████████████████████████| 4688/4688 [03:42<00:00, 21.04it/s]
+
+=== Epoch 34 finish ===
+0    (Jack ) | Q(Pass/Bet)=-4.493/-7.840 | Nash=1.00/0.00 | L1=0.068 | Exploit=0.0000
+0p   (Jack ) | Q(Pass/Bet)=-7.742/-7.407 | Nash=1.00/0.00 | L1=1.166 | Exploit=0.3358
+0b   (Jack ) | Q(Pass/Bet)=-5.192/-5.264 | Nash=1.00/0.00 | L1=0.964 | Exploit=0.0000
+0pb  (Jack ) | Q(Pass/Bet)=-2.336/-5.512 | Nash=1.00/0.00 | L1=0.080 | Exploit=0.0000
+1    (Queen) | Q(Pass/Bet)=-3.744/-3.621 | Nash=0.67/0.33 | L1=0.395 | Exploit=0.0818
+1p   (Queen) | Q(Pass/Bet)=-3.156/-3.876 | Nash=1.00/0.00 | L1=0.655 | Exploit=0.0000
+1b   (Queen) | Q(Pass/Bet)=-7.310/-5.559 | Nash=0.67/0.33 | L1=1.037 | Exploit=1.1673
+1pb  (Queen) | Q(Pass/Bet)=-3.464/-4.911 | Nash=0.67/0.33 | L1=0.286 | Exploit=0.4822
+2    (King ) | Q(Pass/Bet)=-2.991/-3.820 | Nash=0.00/1.00 | L1=1.392 | Exploit=0.8287
+2p   (King ) | Q(Pass/Bet)=-4.469/-4.845 | Nash=0.00/1.00 | L1=1.186 | Exploit=0.3755
+2b   (King ) | Q(Pass/Bet)=-2.953/-2.953 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0000
+2pb  (King ) | Q(Pass/Bet)=-5.737/-5.900 | Nash=0.00/1.00 | L1=1.081 | Exploit=0.1630
+
+============================================================
+Nash Analysis: Epoch 34 finish
+L1 Deviation:  Mean=0.776  Max=1.392
+KL Divergence: Mean=0.533  Max=1.191
+Exploitability:Mean=0.2862 Max=1.1673
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 35 | Total Loss: 0.0012 | Pr Loss: 0.0000 | Adv Loss: 0.0012: 100%|████████████████████████████████████████████████████████████████████| 4688/4688 [03:49<00:00, 20.43it/s]
+
+=== Epoch 35 finish ===
+0    (Jack ) | Q(Pass/Bet)=-4.493/-7.840 | Nash=1.00/0.00 | L1=0.068 | Exploit=0.0000
+0p   (Jack ) | Q(Pass/Bet)=-7.742/-7.407 | Nash=1.00/0.00 | L1=1.166 | Exploit=0.3358
+0b   (Jack ) | Q(Pass/Bet)=-5.192/-5.264 | Nash=1.00/0.00 | L1=0.964 | Exploit=0.0000
+0pb  (Jack ) | Q(Pass/Bet)=-2.336/-5.512 | Nash=1.00/0.00 | L1=0.080 | Exploit=0.0000
+1    (Queen) | Q(Pass/Bet)=-3.744/-3.621 | Nash=0.67/0.33 | L1=0.395 | Exploit=0.0818
+1p   (Queen) | Q(Pass/Bet)=-3.156/-3.876 | Nash=1.00/0.00 | L1=0.655 | Exploit=0.0000
+1b   (Queen) | Q(Pass/Bet)=-7.310/-5.559 | Nash=0.67/0.33 | L1=1.037 | Exploit=1.1673
+1pb  (Queen) | Q(Pass/Bet)=-3.464/-4.911 | Nash=0.67/0.33 | L1=0.286 | Exploit=0.4822
+2    (King ) | Q(Pass/Bet)=-2.991/-3.820 | Nash=0.00/1.00 | L1=1.392 | Exploit=0.8287
+2p   (King ) | Q(Pass/Bet)=-4.469/-4.845 | Nash=0.00/1.00 | L1=1.186 | Exploit=0.3755
+2b   (King ) | Q(Pass/Bet)=-2.953/-2.953 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0000
+2pb  (King ) | Q(Pass/Bet)=-5.737/-5.900 | Nash=0.00/1.00 | L1=1.081 | Exploit=0.1630
+
+============================================================
+Nash Analysis: Epoch 35 finish
+L1 Deviation:  Mean=0.776  Max=1.392
+KL Divergence: Mean=0.533  Max=1.191
+Exploitability:Mean=0.2862 Max=1.1673
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 36 | Total Loss: 0.0023 | Pr Loss: 0.0023 | Adv Loss: 0.0000: 100%|████████████████████████████████████████████████████████████████████| 4688/4688 [03:58<00:00, 19.67it/s]
+
+=== Epoch 36 finish ===
+0    (Jack ) | Q(Pass/Bet)=-7.194/-7.186 | Nash=1.00/0.00 | L1=1.004 | Exploit=0.0084
+0p   (Jack ) | Q(Pass/Bet)=-5.577/-4.191 | Nash=1.00/0.00 | L1=1.600 | Exploit=1.3861
+0b   (Jack ) | Q(Pass/Bet)=-4.659/-4.795 | Nash=1.00/0.00 | L1=0.933 | Exploit=0.0000
+0pb  (Jack ) | Q(Pass/Bet)=-11.728/-9.280 | Nash=1.00/0.00 | L1=1.841 | Exploit=2.4484
+1    (Queen) | Q(Pass/Bet)=-3.624/-2.998 | Nash=0.67/0.33 | L1=0.637 | Exploit=0.4176
+1p   (Queen) | Q(Pass/Bet)=-3.879/-4.459 | Nash=1.00/0.00 | L1=0.718 | Exploit=0.0000
+1b   (Queen) | Q(Pass/Bet)=-5.882/-4.527 | Nash=0.67/0.33 | L1=0.923 | Exploit=0.9037
+1pb  (Queen) | Q(Pass/Bet)=-8.817/-3.558 | Nash=0.67/0.33 | L1=1.323 | Exploit=3.5058
+2    (King ) | Q(Pass/Bet)=-3.914/-4.479 | Nash=0.00/1.00 | L1=1.275 | Exploit=0.5643
+2p   (King ) | Q(Pass/Bet)=-4.273/-6.716 | Nash=0.00/1.00 | L1=1.840 | Exploit=2.4425
+2b   (King ) | Q(Pass/Bet)=-3.858/-3.858 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0000
+2pb  (King ) | Q(Pass/Bet)=-3.287/-4.969 | Nash=0.00/1.00 | L1=1.686 | Exploit=1.6822
+
+============================================================
+Nash Analysis: Epoch 36 finish
+L1 Deviation:  Mean=1.232  Max=1.841
+KL Divergence: Mean=1.298  Max=2.874
+Exploitability:Mean=1.1133 Max=3.5058
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 37 | Total Loss: 0.0016 | Pr Loss: 0.0000 | Adv Loss: 0.0016: 100%|████████████████████████████████████████████████████████████████████| 4688/4688 [03:56<00:00, 19.81it/s]
+
+=== Epoch 37 finish ===
+0    (Jack ) | Q(Pass/Bet)=-7.194/-7.186 | Nash=1.00/0.00 | L1=1.004 | Exploit=0.0084
+0p   (Jack ) | Q(Pass/Bet)=-5.577/-4.191 | Nash=1.00/0.00 | L1=1.600 | Exploit=1.3861
+0b   (Jack ) | Q(Pass/Bet)=-4.659/-4.795 | Nash=1.00/0.00 | L1=0.933 | Exploit=0.0000
+0pb  (Jack ) | Q(Pass/Bet)=-11.728/-9.280 | Nash=1.00/0.00 | L1=1.841 | Exploit=2.4484
+1    (Queen) | Q(Pass/Bet)=-3.624/-2.998 | Nash=0.67/0.33 | L1=0.637 | Exploit=0.4176
+1p   (Queen) | Q(Pass/Bet)=-3.879/-4.459 | Nash=1.00/0.00 | L1=0.718 | Exploit=0.0000
+1b   (Queen) | Q(Pass/Bet)=-5.882/-4.527 | Nash=0.67/0.33 | L1=0.923 | Exploit=0.9037
+1pb  (Queen) | Q(Pass/Bet)=-8.817/-3.558 | Nash=0.67/0.33 | L1=1.323 | Exploit=3.5058
+2    (King ) | Q(Pass/Bet)=-3.914/-4.479 | Nash=0.00/1.00 | L1=1.275 | Exploit=0.5643
+2p   (King ) | Q(Pass/Bet)=-4.273/-6.716 | Nash=0.00/1.00 | L1=1.840 | Exploit=2.4425
+2b   (King ) | Q(Pass/Bet)=-3.858/-3.858 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0000
+2pb  (King ) | Q(Pass/Bet)=-3.287/-4.969 | Nash=0.00/1.00 | L1=1.686 | Exploit=1.6822
+
+============================================================
+Nash Analysis: Epoch 37 finish
+L1 Deviation:  Mean=1.232  Max=1.841
+KL Divergence: Mean=1.298  Max=2.874
+Exploitability:Mean=1.1133 Max=3.5058
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 38 | Total Loss: 0.0009 | Pr Loss: 0.0009 | Adv Loss: 0.0000: 100%|████████████████████████████████████████████████████████████████████| 4688/4688 [04:08<00:00, 18.83it/s]
+
+=== Epoch 38 finish ===
+0    (Jack ) | Q(Pass/Bet)=-6.606/-7.388 | Nash=1.00/0.00 | L1=0.628 | Exploit=0.0000
+0p   (Jack ) | Q(Pass/Bet)=-6.852/-3.331 | Nash=1.00/0.00 | L1=1.943 | Exploit=3.5215
+0b   (Jack ) | Q(Pass/Bet)=-8.204/-5.486 | Nash=1.00/0.00 | L1=1.876 | Exploit=2.7177
+0pb  (Jack ) | Q(Pass/Bet)=-7.721/-8.863 | Nash=1.00/0.00 | L1=0.484 | Exploit=0.0000
+1    (Queen) | Q(Pass/Bet)=-2.507/-2.717 | Nash=0.67/0.33 | L1=0.229 | Exploit=0.0699
+1p   (Queen) | Q(Pass/Bet)=-4.313/-3.392 | Nash=1.00/0.00 | L1=1.430 | Exploit=0.9202
+1b   (Queen) | Q(Pass/Bet)=-5.714/-4.324 | Nash=0.67/0.33 | L1=0.935 | Exploit=0.9266
+1pb  (Queen) | Q(Pass/Bet)=-6.963/-5.134 | Nash=0.67/0.33 | L1=1.057 | Exploit=1.2195
+2    (King ) | Q(Pass/Bet)=-4.252/-3.687 | Nash=0.00/1.00 | L1=0.725 | Exploit=0.0000
+2p   (King ) | Q(Pass/Bet)=-6.626/-5.974 | Nash=0.00/1.00 | L1=0.685 | Exploit=0.0000
+2b   (King ) | Q(Pass/Bet)=-3.419/-3.419 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0000
+2pb  (King ) | Q(Pass/Bet)=-4.855/-4.873 | Nash=0.00/1.00 | L1=1.009 | Exploit=0.0181
+
+============================================================
+Nash Analysis: Epoch 38 finish
+L1 Deviation:  Mean=1.000  Max=1.943
+KL Divergence: Mean=0.982  Max=3.551
+Exploitability:Mean=0.7828 Max=3.5215
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json
+Epoch 39 | Total Loss: 0.0014 | Pr Loss: 0.0000 | Adv Loss: 0.0014: 100%|████████████████████████████████████████████████████████████████████| 4688/4688 [04:05<00:00, 19.11it/s]
+
+=== Epoch 39 finish ===
+0    (Jack ) | Q(Pass/Bet)=-6.606/-7.388 | Nash=1.00/0.00 | L1=0.628 | Exploit=0.0000
+0p   (Jack ) | Q(Pass/Bet)=-6.852/-3.331 | Nash=1.00/0.00 | L1=1.943 | Exploit=3.5215
+0b   (Jack ) | Q(Pass/Bet)=-8.204/-5.486 | Nash=1.00/0.00 | L1=1.876 | Exploit=2.7177
+0pb  (Jack ) | Q(Pass/Bet)=-7.721/-8.863 | Nash=1.00/0.00 | L1=0.484 | Exploit=0.0000
+1    (Queen) | Q(Pass/Bet)=-2.507/-2.717 | Nash=0.67/0.33 | L1=0.229 | Exploit=0.0699
+1p   (Queen) | Q(Pass/Bet)=-4.313/-3.392 | Nash=1.00/0.00 | L1=1.430 | Exploit=0.9202
+1b   (Queen) | Q(Pass/Bet)=-5.714/-4.324 | Nash=0.67/0.33 | L1=0.935 | Exploit=0.9266
+1pb  (Queen) | Q(Pass/Bet)=-6.963/-5.134 | Nash=0.67/0.33 | L1=1.057 | Exploit=1.2195
+2    (King ) | Q(Pass/Bet)=-4.252/-3.687 | Nash=0.00/1.00 | L1=0.725 | Exploit=0.0000
+2p   (King ) | Q(Pass/Bet)=-6.626/-5.974 | Nash=0.00/1.00 | L1=0.685 | Exploit=0.0000
+2b   (King ) | Q(Pass/Bet)=-3.419/-3.419 | Nash=0.00/1.00 | L1=1.000 | Exploit=0.0000
+2pb  (King ) | Q(Pass/Bet)=-4.855/-4.873 | Nash=0.00/1.00 | L1=1.009 | Exploit=0.0181
+
+============================================================
+Nash Analysis: Epoch 39 finish
+L1 Deviation:  Mean=1.000  Max=1.943
+KL Divergence: Mean=0.982  Max=3.551
+Exploitability:Mean=0.7828 Max=3.5215
+============================================================
+Saved epoch stats to epoch_stats_maxmin.json

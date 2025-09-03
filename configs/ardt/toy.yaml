@@ -1,15 +1,15 @@
 method: ardt
 normalize: false
 train_args:
-  gamma: 1.0
+  gamma:  1
   scale: 1.0
   model_lr: 0.001
   model_wd: 0.0001
-  batch_size: 128
-  warmup_epochs: 10
+  batch_size: 256
+  mse_epochs: 6
   minimax_epochs: 30
-  dt_epochs: 5
-  alpha: 0.001
+  dt_epochs: 7
+  alpha: 0.011
   leaf_weight: 0.9
   transformer_n_layer: 12
   ret_obs_act_model_args:

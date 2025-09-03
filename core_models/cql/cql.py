@@ -1,6 +1,7 @@
 import gym
 import numpy as np
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from tqdm.autonotebook import tqdm
 from copy import deepcopy
@@ -18,8 +19,8 @@ def approx_ce_batch(q_values: torch.Tensor, tau: float) -> torch.Tensor:
     return probs.view_as(q_values)
 
 
-def incentive_violation_loss_zero_sum(policy: torch.Tensor, q_values: torch.Tensor) -> torch.Tensor:
-    """Incentive compatibility loss for zero-sum games."""
+def incentive_violation_loss_zero_sum(policy: torch.Tensor, q_values: torch.Tensor, valid_mask: torch.Tensor = None) -> torch.Tensor:
+    """Incentive compatibility loss for zero-sum games with proper masking."""
     B, T, A1, A2 = q_values.shape
     pi = policy.view(B, T, A1, A2)
     expected_value = (pi * q_values).sum(dim=[2, 3], keepdim=True)
@@ -32,8 +33,48 @@ def incentive_violation_loss_zero_sum(policy: torch.Tensor, q_values: torch.Tens
 
     viol_1 = F.relu(q_diff_1 * a_marg)
     viol_2 = F.relu(q_diff_2 * adv_marg)
+    
+    # Apply valid mask if provided
+    if valid_mask is not None:
+        valid_mask_expanded = valid_mask.unsqueeze(-1).unsqueeze(-1)  # [B, T, 1, 1]
+        viol_1 = viol_1 * valid_mask_expanded
+        viol_2 = viol_2 * valid_mask_expanded
+        
+        if valid_mask.sum() > 0:
+            return (viol_1.sum() + viol_2.sum()) / valid_mask.sum()
+        else:
+            return torch.tensor(0.0, device=q_values.device, requires_grad=True)
 
     return viol_1.mean() + viol_2.mean()
+
+
+def safe_action_extraction(q_values, acts, adv_acts=None):
+    """Safely extract Q-values based on actions, handling invalid actions."""
+    batch_size, seq_len = q_values.shape[:2]
+    
+    if len(q_values.shape) == 3:
+        # Handle single action dimension (either protagonist or adversary)
+        valid_actions = acts.sum(dim=-1) > 0  # [batch_size, seq_len]
+        q_flat = (q_values * acts).sum(dim=-1)
+        q_flat = q_flat * valid_actions.float()
+        return q_flat, valid_actions
+    elif len(q_values.shape) == 4:
+        # Handle joint action space [B, T, A1, A2]
+        valid_acts = acts.sum(dim=-1) > 0  # [batch_size, seq_len]
+        valid_adv_acts = adv_acts.sum(dim=-1) > 0 if adv_acts is not None else valid_acts
+        valid_joint = valid_acts & valid_adv_acts
+        
+        # Extract using outer product of actions
+        acts_expanded = acts.unsqueeze(-1)  # [B, T, A1, 1]
+        adv_acts_expanded = adv_acts.unsqueeze(-2) if adv_acts is not None else acts.unsqueeze(-2)  # [B, T, 1, A2]
+        joint_actions = acts_expanded * adv_acts_expanded  # [B, T, A1, A2]
+        
+        q_flat = (q_values * joint_actions).sum(dim=[-2, -1])
+        q_flat = q_flat * valid_joint.float()
+        return q_flat, valid_joint
+    else:
+        # Already flat
+        return q_values, torch.ones(batch_size, seq_len, device=q_values.device, dtype=torch.bool)
 
 
 def correlated_q_learning(
@@ -48,7 +89,7 @@ def correlated_q_learning(
 ) -> torch.nn.Module:
     """Train Q-function using correlated Q-learning with CE policies."""
 
-    print("=== Correlated Q-Learning Training (Fixed to match Implicit Q) ===")
+    print("=== Correlated Q-Learning Training (Fixed Action Handling) ===")
 
     # Initialize Q-model
     if is_simple_model:
@@ -124,92 +165,106 @@ def correlated_q_learning(
             else:
                 immediate_rewards = torch.zeros(batch_size, 0, device=device)
 
+            # Forward pass to get Q-values for the entire trajectory
+            q_all = q_model(obs, acts, adv_acts)
+
             if epoch < mse_epochs:
                 # MSE warmup phase: predict return-to-go directly like Implicit Q
-                q_pred = q_model(obs, acts, adv_acts)
-                
-                # Handle action selection like Implicit Q
-                if len(q_pred.shape) == 3:
-                    q_pred_flat = (q_pred * adv_acts).sum(dim=-1)
-                else:
-                    q_pred_flat = q_pred.view(batch_size, obs_len)
-                
-                # Clamp predictions like Implicit Q
+                q_pred_flat, valid_actions = safe_action_extraction(q_all, acts, adv_acts)
                 q_pred_flat = torch.clamp(q_pred_flat, -1e6, 1e6)
                 
-                if timestep_mask.sum() > 0:
-                    mse_loss = (((q_pred_flat - ret) ** 2) * timestep_mask.float()).sum() / timestep_mask.sum()
+                # Apply valid action mask to timestep mask
+                effective_mask = timestep_mask.float() * valid_actions.float()
+                
+                if effective_mask.sum() > 0:
+                    mse_loss = (((q_pred_flat - ret) ** 2) * effective_mask).sum() / effective_mask.sum()
                 else:
                     mse_loss = torch.tensor(0.0, device=device, requires_grad=True)
                 
                 ce_loss = torch.tensor(0.0, device=device)
                 total_loss = mse_loss
+                
+                # Debug info for MSE phase
+                if num_batches % 200 == 0:
+                    print(f"\n   MSE Debug - Valid actions: {valid_actions.sum().item()}/{valid_actions.numel()}")
+                    print(f"   Q pred range: [{q_pred_flat.min().item():.3f}, {q_pred_flat.max().item():.3f}]")
+                    print(f"   Return range: [{ret.min().item():.3f}, {ret.max().item():.3f}]")
+                
             else:
                 # CE-Q learning phase with proper next state handling
                 if transition_mask is None or transition_mask.sum() == 0:
                     continue
                     
-                # Get current Q values
-                q_current = q_model(obs, acts, adv_acts)
-                
-                # Handle action selection for current Q
-                if len(q_current.shape) == 3:
-                    q_current_flat = (q_current * adv_acts).sum(dim=-1)
-                else:
-                    q_current_flat = q_current.view(batch_size, obs_len)
-                
-                # Prepare next state data
-                obs_next = obs.clone()
-                obs_next[:, :-1] = obs[:, 1:]
-                obs_next[:, -1] = obs[:, -1]  # Terminal state handling
-                
-                acts_next = acts.clone()
-                acts_next[:, :-1] = acts[:, 1:]
-                acts_next[:, -1] = acts[:, -1]
-                
-                adv_acts_next = adv_acts.clone()
-                adv_acts_next[:, :-1] = adv_acts[:, 1:]
-                adv_acts_next[:, -1] = adv_acts[:, -1]
+                # Get current Q values using slicing
+                q_current_raw = q_all[:, :-1]
+                q_next_raw = q_all[:, 1:]
 
-                # Compute next Q values
-                with torch.no_grad():
-                    q_next = q_model(obs_next, acts_next, adv_acts_next)
-                    
-                    if len(q_next.shape) == 3:
-                        # For CE, we need to consider all action combinations
-                        A1, A2 = acts.shape[-1], adv_acts.shape[-1]
-                        q_next_reshaped = q_next.view(batch_size, -1, A1, A2)
-                        ce_policy = approx_ce_batch(q_next_reshaped, tau)
-                        next_value = (ce_policy * q_next_reshaped).sum(dim=[2, 3])
-                    else:
-                        next_value = q_next.view(batch_size, obs_len)
-
-                # Bellman backup like Implicit Q
+                # Get current flat Q value using the action taken
+                q_current_flat, valid_current = safe_action_extraction(q_all, acts, adv_acts)
                 q_pred = q_current_flat[:, :-1]
-                v_next = next_value[:, 1:].detach()
-                q_target = immediate_rewards + train_args['gamma'] * v_next
+
+                with torch.no_grad():
+                    # Compute next Q values
+                    if len(q_next_raw.shape) == 4:
+                        # Joint action space - use CE policy
+                        A1, A2 = acts.shape[-1], adv_acts.shape[-1]
+                        
+                        # Reshape to [B, T, A1, A2]
+                        q_next_reshaped = q_next_raw.view(batch_size, obs_len - 1, A1, A2)
+                        
+                        # Compute CE policy
+                        ce_policy = approx_ce_batch(q_next_reshaped, tau)
+                        
+                        # Compute next value from CE policy
+                        next_value = (ce_policy * q_next_reshaped).sum(dim=[2, 3])
+
+                    else:
+                        # Single action space - use max for protagonist, min for adversary
+                        # This would be more complex in a full minimax setup.
+                        # For now, we'll assume a greedy protagonist.
+                        next_value = q_next_raw.max(dim=-1)[0]
+                
+                # Bellman backup
+                q_target = immediate_rewards + train_args['gamma'] * next_value.detach()
                 q_target = torch.clamp(q_target, -1e6, 1e6)
                 
-                # Q loss
-                mse_loss = (((q_pred - q_target) ** 2) * transition_mask).sum() / transition_mask.sum()
+                # Q loss with proper masking
+                effective_transition_mask = transition_mask.float() * valid_current[:, :-1].float()
                 
-                # CE loss if we have the policy
-                if len(q_next.shape) == 3:
-                    ce_loss = incentive_violation_loss_zero_sum(ce_policy, q_next_reshaped)
+                if effective_transition_mask.sum() > 0:
+                    mse_loss = (((q_pred - q_target) ** 2) * effective_transition_mask).sum() / effective_transition_mask.sum()
+                else:
+                    mse_loss = torch.tensor(0.0, device=device, requires_grad=True)
+
+                # CE loss if we have joint action space
+                if len(q_next_raw.shape) == 4:
+                    ce_loss = incentive_violation_loss_zero_sum(
+                        ce_policy, q_next_reshaped, valid_mask=effective_transition_mask
+                    )
                 else:
                     ce_loss = torch.tensor(0.0, device=device)
                 
                 total_loss = mse_loss + lambda_ce * ce_loss
+                
+                # Debug info for CE phase
+                if num_batches % 200 == 0:
+                    print(f"\n   CE Debug - Valid transitions: {effective_transition_mask.sum().item()}")
+                    print(f"   Q current range: [{q_pred.min().item():.3f}, {q_pred.max().item():.3f}]")
+                    print(f"   Q target range: [{q_target.min().item():.3f}, {q_target.max().item():.3f}]")
+                    if len(q_next_raw.shape) == 4:
+                        print(f"   CE policy entropy: {(-ce_policy * torch.log(ce_policy + 1e-8)).sum(-1).sum(-1).mean().item():.3f}")
 
             # Check for NaN/Inf like Implicit Q
             if torch.isnan(total_loss) or torch.isinf(total_loss):
                 print(f"❌ FATAL: NaN/Inf detected in total_loss at epoch {epoch}")
+                print(f"   MSE loss: {mse_loss.item()}, CE loss: {ce_loss.item()}")
                 raise RuntimeError("Training stopped due to NaN/Inf in loss")
 
             optimizer.zero_grad()
-            total_loss.backward()
-            torch.nn.utils.clip_grad_norm_(q_model.parameters(), max_norm=1.0)
-            optimizer.step()
+            if total_loss.requires_grad:
+                total_loss.backward()
+                torch.nn.utils.clip_grad_norm_(q_model.parameters(), max_norm=1.0)
+                optimizer.step()
 
             total_q_loss += mse_loss.item()
             total_ce_loss += ce_loss.item()
@@ -266,33 +321,49 @@ def evaluate_q_model(q_model, trajs, obs_size, action_size, adv_action_size,
             try:
                 q_preds_raw = q_model(obs, acts, adv_acts)
                 
-                # Handle action selection like in training
-                if len(q_preds_raw.shape) == 3:
-                    q_preds = (q_preds_raw * adv_acts).sum(dim=-1).cpu().flatten().numpy()
-                else:
-                    q_preds = q_preds_raw.cpu().flatten().numpy()
+                # Handle action selection with proper masking
+                q_preds_flat, valid_actions = safe_action_extraction(q_preds_raw, acts, adv_acts)
+                
+                # Only use valid predictions
+                q_preds = q_preds_flat.cpu().flatten().numpy()
+                valid_mask = valid_actions.cpu().flatten().numpy()
                 
                 # De-scale like Implicit Q to match original reward scale
                 q_preds = q_preds / scale_factor
                 
                 true_returns = np.array([np.sum(traj.rewards[t:]) for t in range(len(traj.rewards))])
 
-                length = min(len(q_preds), len(true_returns))
+                length = min(len(q_preds), len(true_returns), len(valid_mask))
                 q_preds = q_preds[:length]
                 true_returns = true_returns[:length]
-
-                all_q_preds.extend(q_preds)
-                all_true_returns.extend(true_returns)
-                traj_q_vals.append(q_preds)
+                valid_mask = valid_mask[:length]
+                
+                # Only include valid predictions
+                valid_indices = valid_mask.astype(bool)
+                if valid_indices.sum() > 0:
+                    q_preds_valid = q_preds[valid_indices]
+                    true_returns_valid = true_returns[valid_indices]
+                    
+                    all_q_preds.extend(q_preds_valid)
+                    all_true_returns.extend(true_returns_valid)
+                    traj_q_vals.append(q_preds)
+                else:
+                    traj_q_vals.append(np.array([]))
+                    
             except Exception as e:
+                print(f"Error processing trajectory {i}: {e}")
+                traj_q_vals.append(np.array([]))
                 continue
 
     all_q_preds = np.array(all_q_preds)
     all_true_returns = np.array(all_true_returns)
 
-    mse = np.mean((all_q_preds - all_true_returns) ** 2)
-    mae = np.mean(np.abs(all_q_preds - all_true_returns))
-    correlation = np.corrcoef(all_q_preds, all_true_returns)[0, 1] if len(all_true_returns) > 0 else 0.0
+    if len(all_q_preds) > 0 and len(all_true_returns) > 0:
+        mse = np.mean((all_q_preds - all_true_returns) ** 2)
+        mae = np.mean(np.abs(all_q_preds - all_true_returns))
+        correlation = np.corrcoef(all_q_preds, all_true_returns)[0, 1] if len(all_true_returns) > 1 else 0.0
+    else:
+        mse = mae = correlation = 0.0
 
     initial_qs = [q[0] if len(q) > 0 else 0 for q in traj_q_vals]
     max_init_q = np.max(initial_qs) if initial_qs else 0.0
@@ -303,6 +374,7 @@ def evaluate_q_model(q_model, trajs, obs_size, action_size, adv_action_size,
     print(f"Q-value mean: {np.mean(all_q_preds):.3f}, std: {np.std(all_q_preds):.3f}")
     print(f"Return mean: {np.mean(all_true_returns):.3f}, std: {np.std(all_true_returns):.3f}")
     print(f"Initial Q-values: max={max_init_q:.3f}, mean={mean_init_q:.3f}")
+    print(f"Valid predictions: {len(all_q_preds)}/{sum(len(q) for q in traj_q_vals)}")
 
     return traj_q_vals, max_init_q
 
@@ -375,7 +447,12 @@ def maxmin(
         relabeled_traj = deepcopy(traj)
 
         # Replace returns-to-go with Q-value estimates
-        new_returns_to_go = q_vals.tolist()
+        if len(q_vals) > 0:
+            new_returns_to_go = q_vals.tolist()
+        else:
+            # Fallback: use original returns-to-go calculation
+            original_returns = [np.sum(traj.rewards[t:]) for t in range(len(traj.rewards))]
+            new_returns_to_go = original_returns
 
         relabeled_traj.minimax_returns_to_go = new_returns_to_go
         relabeled_trajs.append(relabeled_traj)

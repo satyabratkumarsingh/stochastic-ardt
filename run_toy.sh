@@ -5,11 +5,11 @@ algo=ardt   # ardt, dt, esper
 device=cpu  # or cuda
 export WANDB_API_KEY=91513e3bf41fe06839a645ba89f6dd2e1724a218
 
-echo "⚙️  Starting main.py with debugpy on port 5678"
+echo "⚙️  Starting main.py with debugpy on port 5679"
 echo "🚦 Waiting for VS Code debugger to attach..."
 
 # Launch Python with debugpy, disabling frozen modules issue
-python -Xfrozen_modules=off -m debugpy --listen 5678 --wait-for-client main.py \
+python -Xfrozen_modules=off -m debugpy --listen 5679 --wait-for-client main.py \
     --seed $seed \
     --data_name "toy" \
     --env_name "toy" \
@@ -22,7 +22,7 @@ python -Xfrozen_modules=off -m debugpy --listen 5678 --wait-for-client main.py \
     --K 4 \
     --train_iters 1 \
     --num_steps_per_iter 100 \
-    --run_implicit False \
+    --run_implicit True \
     --offline_file "merged_randomized_data_kuhn_poker.json"
 
 # #!/bin/bash

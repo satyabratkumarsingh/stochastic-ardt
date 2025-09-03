@@ -1,5 +1,3 @@
-
-
 import os
 import json
 import yaml
@@ -12,15 +10,17 @@ from pathlib import Path
 from typing import Tuple, List, Optional, Callable, Dict, Any
 from evaluation.stochastic_ardt_evaluator import ARDTEvaluator
 from evaluation.model_loader import ModelLoader
-from evaluation.stochastic_ardt_evaluator import ARDTValidator, ARDTModelLoader
+from evaluation.stochastic_ardt_evaluator import ARDTModelLoader
 
-TARGET_RETURNS = [-2.0, -1.5, -1.0,-0.5, 0.0, 0.5, 1.0, 1.5, 2.0]
+#TARGET_RETURNS = [-2.0, -1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0]
+TARGET_RETURNS = [-0.04, -0.02, 0.0, 0.02, 0.05, 0.10, 0.5]
+#TARGET_RETURNS = [-1.5, -1.0,  -0.5, 0.0, 0.5, 1.0, 1.5 ]
 NUM_EPISODES = 1000
 SCALE = 1.0
 STATE_MEAN = None
 STATE_STD = None
 
-def load_and_evaluate_models(
+def load_and_evaluate_model(
     seed: int,
     game_name: str,
     method: str,
@@ -28,30 +28,32 @@ def load_and_evaluate_models(
     env_instance,
     device: str = 'cpu'
 ) -> Dict:
-    print("🚀 Starting Model Loading and Evaluation Pipeline...")
+    """Load and evaluate the minimax Decision Transformer model"""
+    print("Starting Model Loading and Evaluation Pipeline...")
     print("=" * 70)
     
-    # Load models
+    # Load minimax model only
     model_loader = ARDTModelLoader(seed, game_name, config_path, device)
-    models = model_loader.load_both_models(method)
     
-    if models['minimax'] is None or models['original'] is None:
-        raise ValueError("Failed to load one or both models. Please check model paths.")
+    try:
+        model, model_params = model_loader.load_model(method, "minimax")
+        if model is None:
+            raise ValueError("Failed to load minimax model")
+    except Exception as e:
+        print(f"Failed to load minimax model: {e}")
+        raise ValueError(f"Model loading failed: {e}")
     
-    minimax_model, minimax_params = models['minimax']
-    original_model, original_params = models['original']
-    
-    # Verify both models have compatible parameters
-    if minimax_params['obs_size'] != original_params['obs_size']:
-        raise ValueError("Model parameter mismatch: different observation sizes")
-    if minimax_params['action_size'] != original_params['action_size']:
-        raise ValueError("Model parameter mismatch: different action sizes")
+    print(f"Successfully loaded minimax model with parameters:")
+    print(f"  - Observation size: {model_params['obs_size']}")
+    print(f"  - Action size: {model_params['action_size']}")
+    print(f"  - Action type: {model_params['action_type']}")
+    print(f"  - Horizon: {model_params['horizon']}")
     
     # Create evaluator using model parameters
     evaluator = ARDTEvaluator.from_model_params(
         env_name=game_name,
         env_instance=env_instance,
-        model_params=minimax_params,  # Both models should have same dimensions
+        model_params=model_params,
         scale=SCALE,
         state_mean=STATE_MEAN,
         state_std=STATE_STD,
@@ -59,125 +61,136 @@ def load_and_evaluate_models(
     )
     
     # Run comprehensive evaluation
+    print("\nRunning comprehensive evaluation...")
     evaluation_results = evaluator.comprehensive_model_evaluation(
-        minimax_model=minimax_model,
+        minimax_model=model,
         method=method,
         target_returns=TARGET_RETURNS,
         num_episodes_per_target=NUM_EPISODES,
         save_path=f"evaluation_results_{game_name}_{method}"
     )
+
+
+def get_model_info(seed: int, game_name: str, method: str, config_path: str) -> Dict:
+    """Get model information without loading the full model"""
+    model_loader = ARDTModelLoader(seed, game_name, config_path, 'cpu')
     
-    # Run validation
-    validator = ARDTValidator(device)
-    
-    eval_fn_normal = evaluator.create_eval_function(case_type="normal")
-    eval_fn_worst = evaluator.create_eval_function(case_type="worst") 
-    
-    validation_results = validator.run_comprehensive_validation(
-        minimax_model=minimax_model,
-        original_model=original_model,
-        eval_fn_normal=eval_fn_normal,
-        eval_fn_worst=eval_fn_worst,
-        target_returns=TARGET_RETURNS or [-2.0, -1.0, 0.0, 1.0, 2.0],
-        num_episodes=100
-    )
-    
-    # Combine results
-    combined_results = {
-        'evaluation': evaluation_results,
-        'validation': validation_results,
-        'model_info': {
-            'minimax_params': minimax_params,
-            'original_params': original_params,
-            'game_name': game_name,
-            'method': method,
-            'seed': seed
+    try:
+        model_info = model_loader.get_model_info(method, "minimax")
+        return {
+            'model_type': 'minimax',
+            'info': model_info,
+            'available': True
         }
-    }
-    
-    print("\n🎉 Pipeline Complete! Check the generated plots and saved results.")
-    
-    return combined_results
+    except Exception as e:
+        print(f"Failed to get model info: {e}")
+        return {
+            'model_type': 'minimax', 
+            'info': None,
+            'available': False,
+            'error': str(e)
+        }
 
-
-def quick_model_comparison(
+def quick_model_test(
     seed: int,
-    game_name: str,
+    game_name: str, 
     method: str,
     config_path: str,
-    env_instance,
     device: str = 'cpu'
-) -> None:
-    """
-    Quick comparison function for a single target return.
-    Model parameters are automatically extracted from saved checkpoints.
-    """
+) -> bool:
+    """Quick test to verify model can be loaded successfully"""
+    try:
+        model_loader = ARDTModelLoader(seed, game_name, config_path, device)
+        model, params = model_loader.load_model(method, "minimax")
+        
+        if model is None:
+            print("Model loading returned None")
+            return False
+            
+        print(f"Model test successful:")
+        print(f"  - Model type: {type(model).__name__}")
+        print(f"  - Parameters: {params}")
+        
+        # Quick forward pass test
+        batch_size = 1
+        seq_len = params.get('horizon', 5)
+        obs_size = params['obs_size']
+        action_size = params['action_size']
+        
+        # Create dummy inputs
+        dummy_obs = torch.zeros(batch_size, seq_len, obs_size)
+        dummy_actions = torch.zeros(batch_size, seq_len, action_size)
+        dummy_rewards = torch.zeros(batch_size, seq_len, 1)
+        dummy_rtg = torch.zeros(batch_size, seq_len, 1)
+        dummy_timesteps = torch.arange(seq_len).unsqueeze(0)
+        dummy_mask = torch.ones(batch_size, seq_len).bool()
+        
+        # Test forward pass
+        with torch.no_grad():
+            model.eval()
+            state_preds, action_preds, return_preds = model(
+                states=dummy_obs,
+                actions=dummy_actions, 
+                rewards=dummy_rewards,
+                returns_to_go=dummy_rtg,
+                timesteps=dummy_timesteps,
+                attention_mask=dummy_mask
+            )
+            
+        print(f"  - Forward pass successful")
+        print(f"  - Action predictions shape: {action_preds.shape}")
+        
+        return True
+        
+    except Exception as e:
+        print(f"Model test failed: {e}")
+        return False
+
+def evaluate_at_target_return(
+    seed: int,
+    game_name: str,
+    method: str, 
+    config_path: str,
+    env_instance,
+    target_return: float,
+    num_episodes: int = 100,
+    device: str = 'cpu'
+) -> Dict:
+    """Evaluate model performance at a specific target return"""
     
-    print(f"🔍 Quick Model Comparison (Target Return: {TARGET_RETURNS})")
-    print("=" * 50)
-    
-    # Load models
+    # Load model
     model_loader = ARDTModelLoader(seed, game_name, config_path, device)
-    models = model_loader.load_both_models(method)
+    model, model_params = model_loader.load_model(method, "minimax")
     
-    if models['minimax'] is None or models['original'] is None:
-        raise ValueError("Failed to load one or both models.")
+    if model is None:
+        raise ValueError("Failed to load model for evaluation")
     
-    minimax_model, minimax_params = models['minimax']
-    original_model, original_params = models['original']
-    
-    # Create evaluator using model parameters
+    # Create evaluator
     evaluator = ARDTEvaluator.from_model_params(
         env_name=game_name,
         env_instance=env_instance,
-        model_params=minimax_params,
+        model_params=model_params,
         scale=SCALE,
         state_mean=STATE_MEAN,
         state_std=STATE_STD,
         device=device
     )
     
-    # Quick evaluation
-    eval_fn_normal = evaluator.create_eval_function(worst_case=False)
-    eval_fn_worst = evaluator.create_eval_function(worst_case=True)
+    # Run evaluation at specific return
+    print(f"Evaluating at target return: {target_return}")
+    results = evaluator.evaluate_at_return_level(
+        model=model,
+        target_return=target_return,
+        num_episodes=num_episodes
+    )
     
-    print("\n--- Normal Case ---")
-    minimax_returns_normal, _ = eval_fn_normal(minimax_model, TARGET_RETURNS, NUM_EPISODES)
-    original_returns_normal, _ = eval_fn_normal(original_model, TARGET_RETURNS, NUM_EPISODES)
-    
-    print(f"Minimax Model: {np.mean(minimax_returns_normal):.3f} ± {np.std(minimax_returns_normal):.3f}")
-    print(f"Original Model: {np.mean(original_returns_normal):.3f} ± {np.std(original_returns_normal):.3f}")
-    print(f"Improvement: {np.mean(minimax_returns_normal) - np.mean(original_returns_normal):.3f}")
-    
-    print("\n--- Worst Case ---")
-    minimax_returns_worst, _ = eval_fn_worst(minimax_model, TARGET_RETURNS, NUM_EPISODES)
-    original_returns_worst, _ = eval_fn_worst(original_model, TARGET_RETURNS, NUM_EPISODES)
-    
-    print(f"Minimax Model: {np.mean(minimax_returns_worst):.3f} ± {np.std(minimax_returns_worst):.3f}")
-    print(f"Original Model: {np.mean(original_returns_worst):.3f} ± {np.std(original_returns_worst):.3f}")
-    print(f"Improvement: {np.mean(minimax_returns_worst) - np.mean(original_returns_worst):.3f}")
-    
-    print("=" * 50)
+    return results
 
-
-def get_model_info(seed: int, game_name: str, method: str, config_path: str) -> Dict:
+# Backwards compatibility function (deprecated)
+def load_and_evaluate_models(*args, **kwargs):
     """
-    Get model information without loading the full models
+    Deprecated: Use load_and_evaluate_model() instead
+    This function is kept for backwards compatibility
     """
-    model_loader = ARDTModelLoader(seed, game_name, config_path, 'cpu')
-    
-    try:
-        minimax_info = model_loader.get_model_info(method, "minimax")
-        original_info = model_loader.get_model_info(method, "original")
-        
-        return {
-            'minimax': minimax_info,
-            'original': original_info,
-            'compatible': (
-                minimax_info['obs_size'] == original_info['obs_size'] and
-                minimax_info['action_size'] == original_info['action_size']
-            )
-        }
-    except Exception as e:
-        print(f"❌ Failed to get model info: {e}")
-        return None
+    print("Warning: load_and_evaluate_models() is deprecated. Use load_and_evaluate_model() instead.")
+    return load_and_evaluate_model(*args, **kwargs)
